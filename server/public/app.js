@@ -49,7 +49,7 @@ function connect() {
   ws.onclose = () => {
     if (typeof vc !== 'undefined' && (vc.channel || vc.stream)) leaveVoice(true);
     pending.forEach(p => p.reject(new Error('Connexion perdue'))); pending.clear();
-    if (st.me) $('#conn').hidden = false;
+    if (st.me || retry >= 1) $('#conn').hidden = false; // même avant connexion : sinon page vide si le serveur est éteint
     setTimeout(connect, Math.min(1000 * 2 ** retry++, 10000));
   };
 }
@@ -72,6 +72,7 @@ function handle(m) {
       st.read = store.get('parlotte-read-' + st.me) || {}; st.profile = m.profile;
       if (!st.restored) { const v = store.get('parlotte-view-' + st.me); if (v) Object.assign(st.view, { server: v.server, channel: v.channel }); st.restored = true; }
       $('#auth').hidden = true; $('#app').hidden = false;
+      onAuthed(); // présence : inactivité, jeu en cours (presence.js)
       break;
     case 'bootstrap': {
       P = m.P || P;
@@ -123,6 +124,7 @@ function handle(m) {
     case 'ring': onRing(m.channelId, m.from); break;
     case 'callDeclined': if (vc.channel === m.channelId) { toast(`${user(m.by).name} a refusé l'appel`); leaveVoice(); } break;
     case 'voiceKicked': leaveVoice(true); toast(m.reason); break;
+    case 'sound': onSound(m); break;
   }
   if (p) p.resolve(m);
 }
@@ -138,7 +140,7 @@ let onNewMessage = function (msg) {
     st.unread[msg.channel_id] = (typeof st.unread[msg.channel_id] === 'number' ? st.unread[msg.channel_id] : 0) + 1;
     renderRail(); renderSide(); updateTitle();
     const ch = chanById(msg.channel_id);
-    if (ch && (ch.type === 'dm' || (msg.mentions || []).includes(st.me))) { notify(msg, ch); window.parlotteDesktop?.attention(); }
+    if (ch && !isDnd() && (ch.type === 'dm' || (msg.mentions || []).includes(st.me))) { notify(msg, ch); window.parlotteDesktop?.attention(); }
   }
 }
 function markRead(cid) {
@@ -184,7 +186,16 @@ const dayLabel = d => sameDay(d, Date.now()) ? "Aujourd'hui" : sameDay(d, Date.n
   : new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 const dot = { online: '#23a55a', idle: '#f0b232', dnd: '#f23f43', offline: '#80848e' };
 const STATUS = { online: 'En ligne', idle: 'Absent', dnd: 'Ne pas déranger', invisible: 'Invisible', offline: 'Hors ligne' };
-const subline = u => esc(u.customStatus || STATUS[u.status] || '');
+// Ligne de statut : statut perso (emoji + texte), sinon jeu en cours, sinon le statut.
+const emojiHTML = tok => { const m = /^<:(\w{2,32}):([0-9a-z]+)>$/.exec(tok || ''); const e = m && emojiById(m[2]);
+  return m ? (e ? `<img class="emoji" src="${esc(e.url)}" alt=":${esc(m[1])}:">` : `:${esc(m[1])}:`) : esc(tok); };
+const statusLine = u => {
+  if (u.customStatus || u.statusEmoji) return `${u.statusEmoji ? emojiHTML(u.statusEmoji) + ' ' : ''}${esc(u.customStatus || '')}`;
+  if (u.activity) return `🎮 Joue à <b>${esc(u.activity.name)}</b>`;
+  return esc(STATUS[u.status] || '');
+};
+const subline = statusLine;
+const isDnd = () => st.profile?.presence === 'dnd';
 const avatar = (u, withStatus) => `<div class="av" data-user="${esc(u.id)}" style="background:${u.avatar ? `url('${esc(u.avatar)}')` : esc(u.color)}">${u.avatar ? '' : esc(u.name[0].toUpperCase())}${withStatus ? `<span class="st" style="background:${dot[u.status] || dot.offline}"></span>` : ''}</div>`;
 // Mise en forme : ```blocs de code```, > citations, # titres, listes, **gras**, *italique*, __souligné__,
 // ~~barré~~, ||spoiler||, `code`, liens, @mentions, #salons, emojis perso.
@@ -272,8 +283,10 @@ function renderSide() {
       (owner ? '<p class="small" style="padding:12px 8px"><button class="danger-btn" id="delete-server">Supprimer le serveur</button></p>' : '');
   }
   const me = user(st.me);
-  const mine = { ...me, status: st.profile?.presence === 'invisible' ? 'offline' : st.profile?.presence || me.status };
-  $('#me').innerHTML = `${avatar(mine, true)}<div class="meinfo" id="open-profile" title="Modifier mon profil"><b>${esc(me.name)}</b><small>${esc(st.profile?.customStatus || STATUS[st.profile?.presence || 'online'])}</small></div><button id="open-settings" title="Paramètres">⚙</button>`;
+  const pr = st.profile || {}, chosen = pr.presence || 'online';
+  const mine = { ...me, status: chosen === 'invisible' ? 'offline' : chosen === 'online' && me.status === 'idle' ? 'idle' : chosen };
+  const line = pr.customStatus || pr.statusEmoji ? statusLine(pr) : me.activity ? statusLine({ activity: me.activity }) : esc(STATUS[chosen === 'online' ? mine.status : chosen]);
+  $('#me').innerHTML = `<button class="me-av" id="open-status" title="Changer de statut">${avatar(mine, true)}</button><div class="meinfo" id="open-profile" title="Modifier mon profil"><b>${esc(me.name)}</b><small>${line}</small></div><button id="open-settings" title="Paramètres">⚙</button>`;
 }
 
 function renderMain(scroll) {
@@ -698,12 +711,14 @@ $('#me').addEventListener('click', e => { if (e.target.closest('#open-profile'))
 document.addEventListener('click', e => {
   const card = $('#card');
   const t = e.target.closest('[data-user]');
-  if (!t || e.target.closest('#card,#me,#prof-av,#dlg,#side-list,#profile-dlg')) { if (!e.target.closest('#card')) card.hidden = true; return; }
+  if (!t || e.target.closest('#card,#me,#prof-av,#dlg,#profile-dlg,#status-menu') || (e.target.closest('#side-list') && !e.target.closest('.vmem'))) { if (!e.target.closest('#card')) card.hidden = true; return; }
   const u = user(t.dataset.user); if (!u || u.id === 'system') return;
   const friend = st.friends.includes(u.id);
   card.innerHTML = `<div class="ban" style="background:${esc(u.color)}"></div><div class="in">${avatar(u, true)}
     <h3>${esc(u.name)}</h3><div class="small">${esc(STATUS[u.status] || '')}</div>
-    ${u.customStatus ? `<div class="cs">${esc(u.customStatus)}</div>` : ''}${u.about ? `<div class="ab">${esc(u.about)}</div>` : ''}
+    ${u.customStatus || u.statusEmoji ? `<div class="cs">${statusLine({ customStatus: u.customStatus, statusEmoji: u.statusEmoji })}</div>` : ''}
+    ${u.activity ? `<div class="act">🎮 Joue à <b>${esc(u.activity.name)}</b><small>depuis ${esc(sinceText(u.activity.since))}</small></div>` : ''}
+    ${userVolumeHTML(u)}${u.about ? `<div class="ab">${esc(u.about)}</div>` : ''}
     ${cardRolesHTML(u)}
     ${u.id === st.me ? '<button class="primary msgbtn" id="card-edit">Modifier mon profil</button>'
       : friend ? `<button class="primary msgbtn" data-carddm="${esc(u.id)}">Envoyer un message</button>`
@@ -759,7 +774,8 @@ function renderVoicePanel() {
     <button id="vp-mute" class="${vc.muted ? 'off' : ''}" title="${vc.muted ? 'Réactiver le micro' : 'Couper le micro'}">${vc.muted ? '🤐' : '🎤'}</button>
     <button id="vp-deaf" class="${vc.deafened ? 'off' : ''}" title="${vc.deafened ? 'Réactiver le son' : 'Couper le son'}">${vc.deafened ? '🔇' : '🎧'}</button>
     ${cp(chanById(cid), P.VIDEO) ? `<button id="vp-cam" class="${vc.camera ? 'on' : ''}" title="${vc.camera ? 'Couper la caméra' : 'Activer la caméra'}">📷</button>` : ''}
-    ${canShareScreen && cp(chanById(cid), P.VIDEO) ? `<button id="vp-screen" class="${vc.screen ? 'on' : ''}" title="${vc.screen ? 'Arrêter le partage' : 'Partager mon écran'}">🖥️</button>` : ''}</div>`);
+    ${canShareScreen && cp(chanById(cid), P.VIDEO) ? `<button id="vp-screen" class="${vc.screen ? 'on' : ''}" title="${vc.screen ? 'Arrêter le partage' : 'Partager mon écran'}">🖥️</button>` : ''}
+    ${vc.channel && cp(chanById(cid), P.SPEAK) ? '<button id="vp-sb" title="Soundboard">🎵</button>' : ''}</div>`);
   const call = $('#call'); call.classList.toggle('active', vc.channel && vc.channel === st.view.channel);
   call.title = call.classList.contains('active') ? 'Raccrocher' : 'Lancer un appel vocal';
 }
@@ -771,7 +787,8 @@ async function joinVoice(cid) {
   if (vc.channel) leaveVoice();
   vc.joining = cid; renderVoicePanel();
   try {
-    vc.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+    vc.stream = await getMic();      // micro brut (voix.js : appareil, suppression de bruit…)
+    vc.send = makeSendStream(vc.stream); // ce qu'on envoie : passe par la porte (sensibilité / appuyer pour parler)
   } catch (e) {
     vc.joining = null; renderVoicePanel();
     return toast(e.name === 'NotAllowedError' ? 'Micro refusé : autorise le micro pour ce site dans ton navigateur' : 'Aucun micro trouvé', true);
@@ -787,7 +804,7 @@ async function joinVoice(cid) {
   } catch (e) { stopLocal(); vc.joining = null; toast(e.message, true); }
   renderVoicePanel(); renderSide(); if (chanById(cid)?.type === 'dm') renderMain('keep');
 }
-function stopLocal() { vc.stream?.getTracks().forEach(t => t.stop()); vc.stream = null; }
+function stopLocal() { vc.stream?.getTracks().forEach(t => t.stop()); vc.stream = null; stopSendStream(); }
 function leaveVoice(serverAlreadyKnows) {
   if (!vc.channel && !vc.stream) return;
   const cid = vc.channel;
@@ -815,14 +832,14 @@ function createPeer(uid) {
   pc.onicecandidate = e => { if (e.candidate) rtcSend(uid, { candidate: e.candidate.toJSON() }); };
   pc.ontrack = e => {
     const stream = e.streams[0]; if (!stream) return;
-    if (e.track.kind === 'audio') { audio.srcObject = stream; audio.play().catch(() => {}); watchSpeaking(uid, stream); }
+    if (e.track.kind === 'audio') { audio.srcObject = stream; audio.play().catch(() => {}); routePeerAudio(uid, peer, stream); watchSpeaking(uid, stream); }
     else { peer.streams.set(stream.id, stream); stream.onremovetrack = () => { if (!stream.getTracks().length) { peer.streams.delete(stream.id); renderStage(); } }; renderStage(); }
   };
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed') { toast(`Connexion audio impossible avec ${user(uid).name} (réseau qui bloque les appareils entre eux ?)`, true); pc.restartIce?.(); }
     renderVoicePanel();
   };
-  vc.stream.getTracks().forEach(t => pc.addTrack(t, vc.stream));
+  (vc.send || vc.stream).getTracks().forEach(t => pc.addTrack(t, vc.send || vc.stream));
   for (const kind of ['camera', 'screen']) { const st_ = vc[kind]; if (st_) peer.senders[kind] = pc.addTrack(st_.getVideoTracks()[0], st_); }
   return peer;
 }
@@ -926,7 +943,7 @@ $('#stage-toggle').onclick = () => { vc.stageCollapsed = !vc.stageCollapsed; ren
 
 function closePeer(uid) {
   const p = vc.peers.get(uid); if (!p) return;
-  p.pc.close(); p.audio.srcObject = null; p.audio.remove(); vc.peers.delete(uid); stopMeter(uid); renderStage();
+  p.pc.close(); p.audio.srcObject = null; p.audio.remove(); try { p.gain?.disconnect(); p.src?.disconnect(); } catch {} vc.peers.delete(uid); stopMeter(uid); renderStage();
 }
 function onVoiceState(cid, members) {
   const before = (st.voice[cid] || []).map(m => m.id);
@@ -943,8 +960,8 @@ function onVoiceState(cid, members) {
   if (cid === st.view.channel) renderMain('keep');
 }
 function applyMute() {
-  vc.stream?.getAudioTracks().forEach(t => (t.enabled = !(vc.muted || vc.deafened)));
-  vc.peers.forEach(p => (p.audio.muted = vc.deafened));
+  (vc.send || vc.stream)?.getAudioTracks().forEach(t => (t.enabled = !(vc.muted || vc.deafened)));
+  updatePeerVolumes(); // casque coupé, volume par personne (voix.js)
 }
 const sendVoiceState = () => request('voiceState', { muted: vc.muted, deafened: vc.deafened, camera: vc.camera?.id || null, screen: vc.screen?.id || null }).catch(() => {});
 
@@ -964,7 +981,9 @@ setInterval(() => {
   for (const [uid, m] of meters) {
     m.analyser.getByteTimeDomainData(m.data);
     let sum = 0; for (const v of m.data) sum += (v - 128) ** 2;
-    const loud = Math.sqrt(sum / m.data.length) > 6 && !(uid === st.me && (vc.muted || vc.deafened));
+    const level = Math.sqrt(sum / m.data.length);
+    if (uid === st.me) micLevel(level); // porte de bruit / vumètre des paramètres
+    const loud = level > 6 && !(uid === st.me && (vc.muted || vc.deafened || !micOpen()));
     if (loud !== speaking.has(uid)) {
       loud ? speaking.add(uid) : speaking.delete(uid);
       document.querySelectorAll(`[data-speaker="${CSS.escape(uid)}"]`).forEach(el => el.classList.toggle('speaking', loud));
@@ -993,8 +1012,9 @@ function onRing(cid, from) {
   if (vc.channel === cid) return;
   ringing = cid; const u = user(from);
   $('#ring-name').textContent = u.name; $('#ring .ring-av').innerHTML = avatar(u); $('#ring').hidden = false;
-  playTone('ring'); clearInterval(ringLoop); ringLoop = setInterval(() => playTone('ring'), 2000);
-  clearTimeout(ringTimer); ringTimer = setTimeout(hideRing, 30000);
+  clearInterval(ringLoop); clearTimeout(ringTimer); ringTimer = setTimeout(hideRing, 30000);
+  if (isDnd()) return; // Ne pas déranger : la bannière s'affiche, mais sans sonnerie ni notification
+  playTone('ring'); ringLoop = setInterval(() => playTone('ring'), 2000);
   if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     try { new Notification(`${u.name} t'appelle`, { body: 'Ouvre Parlotte pour répondre' }); } catch {}
   }
@@ -1012,6 +1032,7 @@ $('#voice-panel').addEventListener('click', e => {
   if (e.target.closest('#vp-cam')) toggleVideo('camera');
   if (e.target.closest('#vp-screen')) toggleVideo('screen');
   if (e.target.closest('#vp-deaf')) { vc.deafened = !vc.deafened; applyMute(); sendVoiceState(); renderVoicePanel(); }
+  if (e.target.closest('#vp-sb')) toggleSoundboard(e.target.closest('#vp-sb'));
 });
 $('#view').addEventListener('click', e => { if (e.target.closest('[data-joincall]')) joinVoice(st.view.channel); });
 window.addEventListener('beforeunload', () => { if (vc.channel) leaveVoice(); });
@@ -1032,7 +1053,7 @@ const PERM_LABELS = () => [
   ['KICK', 'Expulser des membres', ''],
   ['BAN', 'Bannir des membres', ''],
   ['MANAGE_SERVER', 'Gérer le serveur', 'Renommer le serveur, changer le code d\'invitation'],
-  ['MANAGE_EMOJIS', 'Gérer les emojis', 'Ajouter et supprimer les emojis du serveur'],
+  ['MANAGE_EMOJIS', 'Gérer les emojis et les sons', 'Ajouter et supprimer les emojis et les sons de la soundboard'],
   ['MENTION_EVERYONE', 'Mentionner @everyone et @here', 'Notifier tout le salon d\'un coup'],
   ['ADMIN', 'Administrateur', '⚠️ Toutes les permissions, ignore les restrictions des salons'],
 ];
@@ -1060,7 +1081,7 @@ function openServerSettings(tab) {
 }
 function renderServerSettings() {
   const s = server(); if (!s) return $('#srv-dlg').close();
-  const tabs = [['overview', 'Vue d\'ensemble', P.MANAGE_SERVER], ['roles', 'Rôles', P.MANAGE_ROLES], ['members', 'Membres', 0], ['emojis', 'Emojis', 0], ['bans', 'Bannissements', P.BAN]]
+  const tabs = [['overview', 'Vue d\'ensemble', P.MANAGE_SERVER], ['roles', 'Rôles', P.MANAGE_ROLES], ['members', 'Membres', 0], ['emojis', 'Emojis', 0], ['sounds', 'Sons', 0], ['bans', 'Bannissements', P.BAN]]
     .filter(([, , f]) => !f || sp(s, f));
   $('#srv-tabs').innerHTML = `<h4>${esc(s.name)}</h4>` + tabs.map(([k, l]) => `<button data-stab="${k}" class="${srvTab === k ? 'on' : ''}">${l}</button>`).join('');
   const body = $('#srv-body');
@@ -1098,6 +1119,8 @@ function renderServerSettings() {
     body.innerHTML = `<h3>Emojis — ${s.emojis.length}/50</h3><p class="small">Utilise-les dans les messages avec <code>:nom:</code>, dans le sélecteur 😀 ou en réaction.</p>
       ${manage ? `<div class="emo-add"><input type="file" id="emo-file" accept="image/png,image/jpeg,image/gif,image/webp"><input id="emo-name" placeholder="nom (ex : gg)" maxlength="32"><button class="primary" id="emo-add">Ajouter</button></div><p class="small">Image carrée conseillée, 512 Ko max. Les GIF animés marchent aussi.</p>` : '<p class="small">Il faut la permission « Gérer les emojis » pour en ajouter.</p>'}
       <div class="emo-grid">${s.emojis.map(e => `<div class="emo"><img src="${esc(e.url)}" alt=""><b>:${esc(e.name)}:</b><small>par ${esc(user(e.by).name)}</small>${manage ? `<button class="danger-btn" data-delemoji="${e.id}">Supprimer</button>` : ''}</div>`).join('')}</div>`;
+  } else if (srvTab === 'sounds') {
+    body.innerHTML = soundsTabHTML(s);
   } else if (srvTab === 'bans') {
     body.innerHTML = `<h3>Bannissements — ${s.bans.length}</h3>` + (s.bans.map(uid => `<div class="friend">${avatar(user(uid))}<div class="grow"><b>${esc(user(uid).name)}</b></div><button data-unban="${esc(uid)}">Révoquer</button></div>`).join('') || '<p class="small">Personne n\'est banni.</p>');
   }
@@ -1483,6 +1506,9 @@ function openSettings() {
     <h4>Sons et notifications</h4>
     <label class="chk"><input type="checkbox" id="sounds" ${prefs.sounds === false ? '' : 'checked'}> Sons d'arrivée/départ dans le vocal</label>
     <div class="row"><span>Notifications : ${notif}</span>${'Notification' in window && Notification.permission === 'default' ? '<button id="ask-notif">Activer</button>' : ''}</div>
+    <p class="small">En « Ne pas déranger », pas de notification ni de sonnerie d'appel.</p>
+    ${voiceSettingsHTML()}
+    ${presenceSettingsHTML()}
     <h4>Application</h4>
     ${window.parlotteDesktop ? `<p class="small">🖥️ Tu utilises l'application de bureau Parlotte.</p>
       <div class="row"><button id="desk-launcher">Changer de serveur</button>${desktopInfo?.hosting ? '<button id="desk-addr">📡 Adresses pour tes amis</button>' : ''}</div>`
@@ -1523,7 +1549,7 @@ function installHint() {
   if (deferredInstall) return 'Installe Parlotte pour l\'ouvrir comme une vraie application.';
   return 'Sur Android : menu ⋮ du navigateur puis « Ajouter à l\'écran d\'accueil ». Sur ordinateur : icône d\'installation dans la barre d\'adresse.';
 }
-if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {}); // refusé avec un certificat fait maison : sans gravité
+if ('serviceWorker' in navigator && window.isSecureContext && !window.parlotteDesktop) navigator.serviceWorker.register('/sw.js').catch(() => {}); // refusé avec un certificat fait maison : sans gravité
 
 // ---------------------------------------------------------------- Ctrl+K : aller n'importe où
 let qsItems = [], qsActive = 0;

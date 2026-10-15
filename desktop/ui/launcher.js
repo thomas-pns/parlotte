@@ -5,6 +5,7 @@ const err = new URLSearchParams(location.search).get('error');
 if (err) { $('#error').textContent = err; $('#error').hidden = false; }
 D.state().then(s => {
   $('#ver').textContent = 'Version ' + s.version;
+  if (s.update) showUpdate(s.update);
   if (s.joinUrl) $('#url').value = s.joinUrl.replace(/^https:\/\//, '').replace(/:3443$/, '');
   $('#recent').innerHTML = (s.recent || []).map(u => `<button class="chip" data-url="${u.replace(/"/g, '&quot;')}">${u.replace(/^https?:\/\//, '')}</button>`).join('');
 });
@@ -17,3 +18,9 @@ $('#import').onclick = async () => {
 $('#host').onclick = () => { $('#host').textContent = 'Démarrage du serveur…'; $('#host').disabled = true; D.host(); };
 $('#join-form').onsubmit = e => { e.preventDefault(); if ($('#url').value.trim()) { $('#join-form button').textContent = 'Connexion…'; D.join($('#url').value); } };
 $('#recent').onclick = e => { const b = e.target.closest('[data-url]'); if (b) D.join(b.dataset.url); };
+function showUpdate(u) {
+  const p = $('#update'); p.hidden = false;
+  p.innerHTML = `⬆️ Parlotte ${String(u.version).replace(/[^\d.]/g, '')} est disponible. <button id="upd" class="primary green">Mettre à jour</button>`;
+  $('#upd').onclick = () => D.installUpdate();
+}
+D.onUpdate?.(showUpdate);

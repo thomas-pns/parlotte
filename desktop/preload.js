@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('parlotteDesktop', {
   info: () => ipcRenderer.invoke('app:info'),
   setBadge: n => ipcRenderer.send('app:badge', Number(n) || 0),
   attention: () => ipcRenderer.send('app:attention'),
+  idleSeconds: () => ipcRenderer.invoke('app:idle'),
+  onGame: cb => ipcRenderer.on('app:game', (e, name) => cb(String(name || ''))),
+  setShowGame: on => ipcRenderer.send('app:showGame', !!on),
+  onUpdate: cb => ipcRenderer.on('app:update', (e, u) => cb({ version: String(u?.version || '') })),
+  installUpdate: () => ipcRenderer.send('app:installUpdate'),
   // sélecteur de partage d'écran
   onSources: cb => ipcRenderer.on('picker:sources', (e, list) => cb(list)),
   choose: id => ipcRenderer.send('picker:choose', id),

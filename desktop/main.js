@@ -1,10 +1,11 @@
 'use strict';
 // Parlotte — application de bureau.
 // Deux modes : « Héberger » (le serveur tourne dans l'app) ou « Rejoindre » (se connecter au serveur d'un ami).
-const { app, BrowserWindow, ipcMain, session, desktopCapturer, Tray, Menu, nativeImage, shell, dialog, Notification, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, session, desktopCapturer, Tray, Menu, nativeImage, shell, dialog, Notification, clipboard, powerMonitor, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { fork } = require('child_process');
+const os = require('os');
+const { fork, execFile, spawn } = require('child_process');
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 app.setAppUserModelId('fr.parlotte.app'); // notifications Windows au nom de Parlotte
@@ -16,7 +17,7 @@ const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
 const DATA_DIR = path.join(app.getPath('userData'), 'serveur');
 
 // ---------------------------------------------------------------- Configuration
-const defaults = { mode: null, joinUrl: '', recent: [], trusted: {}, minimizeToTray: true, trayHintShown: false };
+const defaults = { mode: null, joinUrl: '', recent: [], trusted: {}, minimizeToTray: true, trayHintShown: false, showGame: true, skipVersion: '' };
 let config = { ...defaults };
 try { config = { ...defaults, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) }; } catch {}
 const saveConfig = () => { try { fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true }); fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2)); } catch {} };
@@ -138,7 +139,9 @@ function createWindow() {
     if (input.type !== 'keyDown') return;
     if (input.key === 'F5') win.webContents.reload();
     if (input.control && input.shift && input.key.toLowerCase() === 'i') win.webContents.toggleDevTools();
+    if (input.control && input.shift && input.key.toLowerCase() === 'l') showLauncher(); // toujours une sortie, même si le serveur ne répond plus
   });
+  win.webContents.on('did-finish-load', () => { if (currentOrigin) { sendGame(true); if (update) win.webContents.send('app:update', update); } });
   win.webContents.on('render-process-gone', () => { if (!quitting) win.webContents.reload(); });
   win.webContents.on('did-fail-load', (e, code, desc, url, isMain) => {
     if (!isMain || code === -3) return; // -3 = navigation annulée
@@ -222,12 +225,14 @@ function updateTray() {
   tray.setToolTip(serverInfo ? `Parlotte — serveur actif (${serverInfo.ips[0] || 'localhost'})` : 'Parlotte');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Ouvrir Parlotte', click: () => { win.show(); win.focus(); } },
+    ...(update ? [{ label: `⬆️ Installer la mise à jour ${update.version}`, click: () => installUpdate() }] : []),
     { type: 'separator' },
     ...(serverInfo ? [{ label: '📡 Adresses pour tes amis…', click: showAddresses }] : []),
     { label: 'Changer de serveur…', click: () => { win.show(); showLauncher(); } },
     { type: 'separator' },
     { label: 'Lancer au démarrage de Windows', type: 'checkbox', checked: login, click: m => { app.setLoginItemSettings({ openAtLogin: m.checked, args: ['--hidden'] }); } },
     { label: 'Réduire dans la barre (au lieu de quitter)', type: 'checkbox', checked: config.minimizeToTray, click: m => { config.minimizeToTray = m.checked; saveConfig(); } },
+    { label: 'Rechercher une mise à jour', click: () => checkUpdate(true) },
     { type: 'separator' },
     { label: serverInfo ? 'Quitter (arrête le serveur)' : 'Quitter', click: () => { quitting = true; app.quit(); } },
   ]));
@@ -241,7 +246,7 @@ function createTray() {
 
 // ---------------------------------------------------------------- Messages venant des pages
 ipcMain.handle('launcher:state', () => ({ mode: config.mode, joinUrl: config.joinUrl, recent: config.recent, version: app.getVersion(),
-  hasData: fs.existsSync(path.join(DATA_DIR, 'data.json')) }));
+  hasData: fs.existsSync(path.join(DATA_DIR, 'data.json')), update }));
 // Importer les données de l'ancienne version (dossier contenant data.json, ex. C:\Users\…\Krunker\parlotte)
 ipcMain.handle('launcher:import', async () => {
   const r = await dialog.showOpenDialog(win, { title: 'Choisis le dossier de ton ancien Parlotte (celui qui contient data.json)', properties: ['openDirectory'] });
@@ -267,7 +272,10 @@ ipcMain.on('launcher:host', () => openHost());
 ipcMain.on('launcher:join', (e, url) => openJoin(url));
 ipcMain.on('app:launcher', () => showLauncher());
 ipcMain.on('app:addresses', () => showAddresses());
-ipcMain.handle('app:info', () => ({ hosting: !!serverInfo, addresses: addressesText().split('\n').filter(Boolean), version: app.getVersion() }));
+ipcMain.handle('app:info', () => ({ hosting: !!serverInfo, addresses: addressesText().split('\n').filter(Boolean), version: app.getVersion(), showGame: config.showGame }));
+ipcMain.handle('app:idle', () => powerMonitor.getSystemIdleTime());
+ipcMain.on('app:showGame', (e, on) => { config.showGame = !!on; saveConfig(); sendGame(true); });
+ipcMain.on('app:installUpdate', () => installUpdate());
 let badgeImg = null;
 ipcMain.on('app:badge', (e, n) => {
   n = Number(n) || 0;
@@ -278,9 +286,123 @@ ipcMain.on('app:badge', (e, n) => {
 });
 ipcMain.on('app:attention', () => { if (!win.isFocused()) win.flashFrame(true); });
 
+// ---------------------------------------------------------------- Jeu en cours (« 🎮 Joue à … »)
+// On regarde la liste des programmes lancés (Windows) et on reconnaît quelques jeux connus.
+const GAMES = {
+  'krunker.exe': 'Krunker', 'official krunker.io client.exe': 'Krunker', 'minecraft.exe': 'Minecraft', 'minecraftlauncher.exe': 'Minecraft',
+  'javaw.exe': null, 'fortniteclient-win64-shipping.exe': 'Fortnite', 'valorant-win64-shipping.exe': 'VALORANT', 'leagueoflegends.exe': 'League of Legends',
+  'league of legends.exe': 'League of Legends', 'rocketleague.exe': 'Rocket League', 'cs2.exe': 'Counter-Strike 2', 'csgo.exe': 'Counter-Strike',
+  'robloxplayerbeta.exe': 'Roblox', 'gta5.exe': 'GTA V', 'gta5_enhanced.exe': 'GTA V', 'r5apex.exe': 'Apex Legends', 'r5apex_dx12.exe': 'Apex Legends',
+  'overwatch.exe': 'Overwatch 2', 'eldenring.exe': 'Elden Ring', 'brawlhalla.exe': 'Brawlhalla', 'amongus.exe': 'Among Us', 'fallguys_client_game.exe': 'Fall Guys',
+  'cod.exe': 'Call of Duty', 'modernwarfare.exe': 'Call of Duty', 'fc25.exe': 'EA SPORTS FC 25', 'fc26.exe': 'EA SPORTS FC 26', 'rainbowsix.exe': 'Rainbow Six Siege',
+  'dota2.exe': 'Dota 2', 'terraria.exe': 'Terraria', 'stardew valley.exe': 'Stardew Valley', 'geometrydash.exe': 'Geometry Dash', 'deadbydaylight-win64-shipping.exe': 'Dead by Daylight',
+  'helldivers2.exe': 'Helldivers 2', 'marvel-win64-shipping.exe': 'Marvel Rivals', 'thefinals.exe': 'THE FINALS', 'palworld-win64-shipping.exe': 'Palworld',
+  'lethal company.exe': 'Lethal Company', 'repo.exe': 'R.E.P.O.', 'peak.exe': 'PEAK', 'rust.exe': 'Rust', 'pubg.exe': 'PUBG', 'tslgame.exe': 'PUBG',
+  'hollow_knight.exe': 'Hollow Knight', 'hollow knight silksong.exe': 'Hollow Knight: Silksong', 'osu!.exe': 'osu!', 'warframe.x64.exe': 'Warframe',
+};
+let game = '', lastSentGame = null;
+function scanGames() {
+  if (process.platform !== 'win32' || !config.showGame) { game = ''; return sendGame(); }
+  execFile('tasklist', ['/fo', 'csv', '/nh'], { windowsHide: true, maxBuffer: 4 << 20 }, (err, out) => {
+    if (err) return;
+    let found = '';
+    for (const line of out.split(/\r?\n/)) { const exe = (line.match(/^"([^"]+)"/) || [])[1]?.toLowerCase(); if (exe && GAMES[exe]) { found = GAMES[exe]; break; } }
+    game = found; sendGame();
+  });
+}
+function sendGame(force) {
+  const g = config.showGame ? game : '';
+  if (!force && g === lastSentGame) return;
+  lastSentGame = g;
+  if (win && !win.isDestroyed() && currentOrigin) win.webContents.send('app:game', g);
+}
+
+// ---------------------------------------------------------------- Mises à jour (Releases GitHub)
+const REPO = 'thomas-pns/parlotte';
+let update = null; // { version, url, page, notes }
+const newer = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+async function checkUpdate(manual) {
+  try {
+    const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { 'User-Agent': 'Parlotte', Accept: 'application/vnd.github+json' } });
+    if (!res.ok) throw new Error('GitHub a répondu ' + res.status);
+    const rel = await res.json();
+    const version = String(rel.tag_name || '').replace(/^v/, '');
+    const asset = (rel.assets || []).find(a => /windows.*\.zip$/i.test(a.name));
+    if (!/^\d+\.\d+\.\d+$/.test(version) || !newer(version, app.getVersion())) {
+      if (manual) dialog.showMessageBox(win, { type: 'info', message: 'Parlotte est à jour', detail: `Tu as la dernière version (${app.getVersion()}).`, noLink: true });
+      return;
+    }
+    update = { version, url: asset?.browser_download_url || null, page: rel.html_url, notes: String(rel.body || '').slice(0, 600) };
+    updateTray();
+    if (win && !win.isDestroyed()) win.webContents.send('app:update', update);
+    if (manual) installUpdate();
+    else if (config.skipVersion !== version && Notification.isSupported()) {
+      const n = new Notification({ title: `Parlotte ${version} est disponible`, body: 'Clique pour mettre à jour.' });
+      n.on('click', () => installUpdate()); n.show();
+    }
+  } catch (e) {
+    if (manual) dialog.showMessageBox(win, { type: 'warning', message: 'Impossible de vérifier les mises à jour', detail: e.message, noLink: true });
+  }
+}
+let updating = false;
+async function installUpdate() {
+  if (!update || updating) return;
+  const portable = app.isPackaged && process.platform === 'win32' && update.url;
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'question', buttons: ['Plus tard', portable ? 'Mettre à jour maintenant' : 'Ouvrir la page de téléchargement'], defaultId: 1, cancelId: 0, noLink: true,
+    title: 'Mise à jour de Parlotte', message: `Mettre à jour Parlotte en ${update.version} ?`,
+    detail: (update.notes ? update.notes + '\n\n' : '') + (portable ? 'Parlotte va se fermer quelques secondes puis se relancer. Tes comptes et messages ne bougent pas.' + (serverProc ? '\nLe serveur que tu héberges redémarrera avec.' : '') : ''),
+  });
+  if (response !== 1) { config.skipVersion = update.version; saveConfig(); return; }
+  if (!portable) return shell.openExternal(update.page);
+  updating = true;
+  try {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parlotte-maj-'));
+    const zip = path.join(dir, 'Parlotte-Windows.zip');
+    await download(update.url, zip, p => win?.setProgressBar(p));
+    win?.setProgressBar(-1);
+    const appDir = path.dirname(process.execPath);
+    // Petit script qui attend la fermeture de Parlotte, remplace les fichiers et relance l'app.
+    const script = path.join(dir, 'maj.cmd');
+    fs.writeFileSync(script, [
+      '@echo off', 'chcp 65001 >nul', 'title Mise a jour de Parlotte',
+      // attend que Parlotte (et son serveur intégré) soit fermé, 30 s maximum
+      'set n=0', ':attente', 'set /a n+=1', `if %n% gtr 30 goto copie`,
+      `tasklist /fi "IMAGENAME eq ${path.basename(process.execPath)}" | find /i "${path.basename(process.execPath)}" >nul && (timeout /t 1 /nobreak >nul & goto attente)`,
+      ':copie',
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${zip.replace(/'/g, "''")}' -DestinationPath '${path.join(dir, 'x').replace(/'/g, "''")}' -Force"`,
+      `if exist "${path.join(dir, 'x', 'Parlotte', 'Parlotte.exe')}" (robocopy "${path.join(dir, 'x', 'Parlotte')}" "${appDir}" /E /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul) else (robocopy "${path.join(dir, 'x')}" "${appDir}" /E /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul)`,
+      `start "" "${process.execPath}"`, '',
+    ].join('\r\n'));
+    spawn('cmd.exe', ['/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    quitting = true; app.quit();
+  } catch (e) {
+    updating = false; win?.setProgressBar(-1);
+    const r = await dialog.showMessageBox(win, { type: 'error', buttons: ['Fermer', 'Ouvrir la page'], noLink: true, message: 'La mise à jour a échoué', detail: e.message });
+    if (r.response === 1) shell.openExternal(update.page);
+  }
+}
+function download(url, dest, onProgress) {
+  return new Promise((resolve, reject) => {
+    const req = net.request({ url, redirect: 'follow' });
+    req.setHeader('User-Agent', 'Parlotte');
+    req.on('response', res => {
+      if (res.statusCode !== 200) return reject(new Error('Téléchargement impossible (' + res.statusCode + ')'));
+      const total = Number(res.headers['content-length']) || 0; let got = 0;
+      const out = fs.createWriteStream(dest);
+      res.on('data', c => { got += c.length; out.write(c); if (total) onProgress(got / total); });
+      res.on('end', () => out.end(() => (total && got !== total ? reject(new Error('Téléchargement incomplet')) : resolve())));
+      res.on('error', reject);
+    });
+    req.on('error', reject); req.end();
+  });
+}
+
 // ---------------------------------------------------------------- Démarrage
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Pas de service worker dans l'app : une page en cache d'un serveur éteint donnerait une fenêtre bloquée.
+  await session.defaultSession.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] }).catch(() => {});
   setupPermissions();
   setupCertificates();
   createWindow();
@@ -290,6 +412,8 @@ app.whenReady().then(() => {
   else if (config.mode === 'join' && config.joinUrl) openJoin(config.joinUrl);
   else showLauncher();
   if (hidden) win.once('ready-to-show', () => win.hide());
+  scanGames(); setInterval(scanGames, 30000);
+  if (app.isPackaged) { setTimeout(checkUpdate, 15000); setInterval(checkUpdate, 6 * 36e5); }
 });
 app.on('before-quit', e => {
   quitting = true;

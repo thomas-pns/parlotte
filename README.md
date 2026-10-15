@@ -41,11 +41,20 @@ entre eux : utilise un partage de connexion ou le wifi de la maison.
 |---|---|
 | 💬 **Discussion** | serveurs, salons, fils de discussion, messages privés, réponses, réactions, épinglés, mentions `@`, `@everyone` |
 | 🎙️ **Vocal & vidéo** | salons vocaux, appels privés, caméra, partage d'écran, messages vocaux |
+| 🎵 **Vocal+** | soundboard (8 sons intégrés + sons perso par serveur), appuyer pour parler, sensibilité du micro, suppression du bruit, choix du micro et de la sortie, volume par personne |
+| 🟢 **Statuts** | en ligne, absent (automatique après inactivité), ne pas déranger, invisible, statut perso avec emoji et durée, « 🎮 Joue à … » détecté par l'app |
 | 📎 **Partage** | images, vidéos, fichiers (10 Mo), glisser-déposer, coller une image |
 | 🛡️ **Modération** | rôles, permissions, salons privés ou en lecture seule, expulser, bannir, bloquer |
 | 🎨 **Confort** | thème clair/sombre, emojis perso, sondages, mise en forme (`**gras**`, `||spoiler||`, blocs de code…), Ctrl+K, recherche avec filtres (`from:`, `has:`…) |
 
 <p><img src="docs/video.png" width="49%" alt="Vidéo"> <img src="docs/theme-clair.png" width="49%" alt="Thème clair"></p>
+
+## ⬆️ Mises à jour
+
+À partir de la 1.1.0, l'app vérifie toute seule s'il existe une nouvelle version sur GitHub et propose de l'installer
+(bandeau vert, ou icône près de l'horloge → « Installer la mise à jour »). Tes comptes et messages ne bougent pas.
+
+> Bloqué sur un serveur éteint ? <kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>L</kbd> ramène à l'écran d'accueil.
 
 ## 🔒 Vie privée
 
@@ -53,6 +62,7 @@ entre eux : utilise un partage de connexion ou le wifi de la maison.
 - Les mots de passe sont chiffrés (scrypt). Les connexions passent en HTTPS avec un certificat créé
   par l'hébergeur ; l'app retient son empreinte et prévient si elle change.
 - Le vocal et la vidéo passent directement d'un appareil à l'autre (WebRTC).
+- Le « jeu en cours » se base sur la liste des programmes lancés, reste sur ton PC et se désactive dans Paramètres → Statut.
 - Prévu pour un **réseau local entre amis**, pas pour être exposé sur Internet.
 
 ## 🛠️ Pour les développeurs

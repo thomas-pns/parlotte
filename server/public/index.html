@@ -87,6 +87,9 @@
   <button id="ring-accept" title="Répondre">📞</button><button id="ring-decline" title="Refuser">✖</button></div>
 <div id="audios" hidden></div>
 <div id="conn" hidden>Connexion au serveur perdue… reconnexion</div>
+<div id="update-bar" hidden></div>
+<div id="status-menu" hidden></div>
+<div id="sb" hidden></div>
 <div id="toast" hidden></div>
 <div id="picker" hidden></div>
 <div id="drop" hidden>Dépose tes fichiers pour les envoyer</div>
@@ -104,6 +107,13 @@
   <label>Message perso <input id="prof-custom" maxlength="80" placeholder="En train de jouer à Krunker…"></label>
   <label>À propos de moi <textarea id="prof-about" maxlength="190" rows="3"></textarea></label>
   <label>Couleur <input type="color" id="prof-color"></label>
+  <menu><button value="cancel">Annuler</button><button value="ok" class="primary">Enregistrer</button></menu>
+</form></dialog>
+<dialog id="cs-dlg"><form method="dialog">
+  <h3>Statut perso</h3>
+  <div class="cs-row"><input id="cs-emoji" class="emo-in" maxlength="16" placeholder="😀" aria-label="Emoji"><input id="cs-text" maxlength="80" placeholder="Que fais-tu ? (ex. En révision 📚)"></div>
+  <div id="cs-quick" class="cs-quick"></div>
+  <label>Effacer après <select id="cs-exp"></select></label>
   <menu><button value="cancel">Annuler</button><button value="ok" class="primary">Enregistrer</button></menu>
 </form></dialog>
 <dialog id="srv-dlg" class="big"><div class="srv-wrap"><nav id="srv-tabs"></nav><div id="srv-body"></div><button id="srv-close" title="Fermer">✕</button></div></dialog>
@@ -125,5 +135,7 @@
 <dialog id="dlg"><form method="dialog"><h3 id="dlg-title"></h3><p id="dlg-text" class="small"></p><input id="dlg-input"><menu><button value="cancel">Annuler</button><button value="ok" id="dlg-ok">OK</button></menu></form></dialog>
 <script src="search.js"></script>
 <script src="app.js"></script>
+<script src="voix.js"></script>
+<script src="presence.js"></script>
 </body>
 </html>

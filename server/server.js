@@ -54,8 +54,16 @@ for (const s of Object.values(db.servers)) {
   if (!s.memberRoles) { migrated = true; s.memberRoles = {}; }
   if (!s.bans) { migrated = true; s.bans = []; }
   if (!s.emojis) { migrated = true; s.emojis = []; }
+  if (!s.sounds) { migrated = true; s.sounds = []; }
 }
 let saveTimer = null;
+// Statuts personnalisés expirés : on les efface et on prévient.
+setInterval(() => {
+  for (const u of Object.values(db.users)) if (statusExpired(u)) {
+    u.customStatus = ''; u.statusEmoji = ''; u.statusExpires = null; save();
+    if (online.has(u.id)) { sendTo(u.id, { t: 'profile', profile: ownProfile(u) }); presenceChanged(u.id); }
+  }
+}, 30000).unref();
 if (migrated) setImmediate(() => save());
 function save() {
   clearTimeout(saveTimer);
@@ -81,14 +89,26 @@ function checkPassword(user, password) {
 // ---------------------------------------------------------------- Règles d'accès
 const online = new Map(); // userId -> Set(socket)
 // Statut vu par les autres : le statut choisi si connecté ; « invisible » apparaît hors ligne.
+// « online » devient « idle » si tous les appareils de la personne sont inactifs depuis un moment.
+const allIdle = uid => [...(online.get(uid) || [])].every(w => w.idle);
 const status = uid => {
   if (!online.has(uid)) return 'offline';
   const s = db.users[uid]?.presence || 'online';
-  return s === 'invisible' ? 'offline' : s;
+  if (s === 'invisible') return 'offline';
+  return s === 'online' && allIdle(uid) ? 'idle' : s;
+};
+// Statut personnalisé (texte + emoji), qui peut expirer.
+const statusExpired = u => u.statusExpires && new Date(u.statusExpires) <= new Date();
+const customOf = u => (statusExpired(u) ? { text: '', emoji: '' } : { text: u.customStatus || '', emoji: u.statusEmoji || '' });
+// Activité (jeu en cours) détectée par l'app de bureau ; cachée en mode invisible.
+const activityOf = uid => {
+  if (status(uid) === 'offline') return null;
+  for (const w of online.get(uid) || []) if (w.activity) return w.activity;
+  return null;
 };
 const fileUrl = fid => (fid && db.uploads[fid] ? `/uploads/${fid}` : null);
 const publicUser = u => ({ id: u.id, name: u.name, color: u.color, status: status(u.id), bot: !!u.bot,
-  avatar: fileUrl(u.avatar), about: u.about || '', customStatus: u.customStatus || '' });
+  avatar: fileUrl(u.avatar), about: u.about || '', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji, activity: activityOf(u.id) });
 const serversOf = uid => Object.values(db.servers).filter(s => s.members.includes(uid));
 const dmsOf = uid => Object.values(db.channels).filter(c => c.type === 'dm' && c.members.includes(uid));
 const roleIdsOf = (s, uid) => [s.id, ...((s.memberRoles || {})[uid] || [])];
@@ -141,7 +161,7 @@ function bootstrap(uid) {
       invite: my & P.INVITE ? s.invite : null, bans: my & P.BAN ? s.bans : [],
       channels: s.channels.map(cid => db.channels[cid]).filter(c => c && canAccess(uid, c)).map(c => ({ ...c, perms: channelPerms(c, uid) })),
       threads: threadsOf(s).filter(t => canAccess(uid, t)).map(t => ({ ...t, perms: channelPerms(t, uid) })),
-      emojis: (s.emojis || []).map(publicEmoji) };
+      emojis: (s.emojis || []).map(publicEmoji), sounds: (s.sounds || []).map(publicSound) };
   });
   const dms = dmsOf(uid);
   const userIds = new Set([uid]);
@@ -202,6 +222,10 @@ function voiceSnapshot(uid) {
 // ---------------------------------------------------------------- Fils et emojis : utilitaires
 const threadsOf = s => Object.values(db.channels).filter(c => c.type === 'thread' && c.server_id === s.id);
 const publicEmoji = e => ({ id: e.id, name: e.name, url: `/uploads/${e.file}`, by: e.by });
+const publicSound = x => ({ id: x.id, name: x.name, emoji: x.emoji || '', url: `/uploads/${x.file}`, volume: x.volume ?? 1, by: x.by });
+// Sons intégrés : synthétisés par le client, rien à télécharger.
+const BUILTIN_SOUNDS = ['airhorn', 'rimshot', 'applause', 'ding', 'sadtrombone', 'drumroll', 'tada', 'pop'];
+const lastSound = new Map(); // userId -> horodatage (anti-spam)
 function broadcastThread(t) {
   for (const u of audienceOf(t)) sendTo(u, { t: 'threadUpdate', thread: { ...t, perms: channelPerms(t, u) } });
 }
@@ -292,7 +316,7 @@ const handlers = {
   createServer(ws, { name }) {
     name = clean(name, 40); if (!name) throw new Error('Nom de serveur vide');
     const s = { id: id(), name, owner: ws.uid, members: [ws.uid], channels: [], invite: inviteCode(), created: now(),
-      memberRoles: {}, bans: [], emojis: [] };
+      memberRoles: {}, bans: [], emojis: [], sounds: [] };
     s.roles = [{ id: s.id, name: '@everyone', color: null, perms: DEFAULT_PERMS, hoist: false, position: 0 }];
     db.servers[s.id] = s;
     const general = createChannel(s.id, 'general'); createChannel(s.id, 'jeux'); createChannel(s.id, 'Vocal', 'voice');
@@ -695,6 +719,46 @@ const handlers = {
   },
 
 
+  // --- Soundboard : sons courts joués à tout le salon vocal
+  addSound(ws, { serverId, name, emoji, fileId, volume }) {
+    const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_EMOJIS, 'Il faut la permission « Gérer les emojis et les sons »');
+    s.sounds = s.sounds || [];
+    name = clean(name, 24);
+    if (name.length < 2) throw new Error('Nom : 2 à 24 caractères');
+    if (s.sounds.length >= 24) throw new Error('24 sons maximum par serveur');
+    const f = db.uploads[fileId];
+    if (!f || f.owner !== ws.uid || !/^audio\//.test(f.content_type)) throw new Error('Le son doit être un fichier audio (mp3, ogg, wav…)');
+    if (f.size > 1024 * 1024) throw new Error('Son trop lourd (1 Mo max)');
+    emoji = clean(emoji, 16);
+    s.sounds.push({ id: crypto.randomBytes(6).toString('hex'), name, emoji, file: f.id, by: ws.uid, created: now(),
+      volume: Math.min(1, Math.max(0.05, Number(volume) || 1)) });
+    save(); refresh(s.members);
+  },
+  deleteSound(ws, { serverId, soundId }) {
+    const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_EMOJIS, 'Il faut la permission « Gérer les emojis et les sons »');
+    s.sounds = (s.sounds || []).filter(x => x.id !== soundId); save(); refresh(s.members);
+  },
+  playSound(ws, { soundId }) {
+    const room = ws.voice && voice.get(ws.voice); const me = room?.get(ws.uid);
+    if (!me || me.ws !== ws) throw new Error('Rejoins un salon vocal pour jouer un son');
+    const ch = db.channels[ws.voice];
+    if (!can(ws.uid, ch, P.SPEAK)) throw new Error('Tu n\'as pas la permission de parler dans ce salon');
+    if (me.deafened) throw new Error('Réactive ton son pour utiliser la soundboard');
+    const last = lastSound.get(ws.uid) || 0;
+    if (Date.now() - last < 1500) throw new Error('Doucement sur la soundboard 🙂');
+    let sound;
+    if (BUILTIN_SOUNDS.includes(soundId)) sound = { id: soundId, builtin: true, volume: 1 };
+    else {
+      // Sons du serveur du salon vocal (en appel privé : ceux de tous les serveurs de l'appelant)
+      const pools = ch.type === 'dm' ? serversOf(ws.uid) : [db.servers[ch.server_id]];
+      const found = pools.flatMap(x => x?.sounds || []).find(x => x.id === soundId);
+      if (!found) throw new Error('Son introuvable');
+      sound = publicSound(found);
+    }
+    lastSound.set(ws.uid, Date.now());
+    for (const [, v] of room) v.ws.send({ t: 'sound', channelId: ws.voice, userId: ws.uid, sound });
+  },
+
   // --- Blocage
   block(ws, { userId }) {
     if (!db.users[userId] || userId === ws.uid) throw new Error('Utilisateur introuvable');
@@ -707,14 +771,38 @@ const handlers = {
     db.blocks[ws.uid] = (db.blocks[ws.uid] || []).filter(u => u !== userId); save(); refresh([ws.uid]);
   },
 
+  // --- Présence : inactivité (souris/clavier) et jeu en cours (app de bureau)
+  activity(ws, { idle }) {
+    const before = status(ws.uid);
+    ws.idle = !!idle;
+    if (status(ws.uid) !== before) presenceChanged(ws.uid);
+  },
+  setActivity(ws, { name }) {
+    const n = clean(name, 64);
+    const next = n ? { type: 'playing', name: n, since: ws.activity?.name === n ? ws.activity.since : now() } : null;
+    if ((ws.activity?.name || null) === (next?.name || null)) return;
+    ws.activity = next; presenceChanged(ws.uid);
+  },
+
   // --- Profil
-  setProfile(ws, { presence, customStatus, about, avatar, color }) {
+  setProfile(ws, { presence, customStatus, statusEmoji, statusExpires, about, avatar, color }) {
     const u = db.users[ws.uid];
     if (presence !== undefined) {
       if (!['online', 'idle', 'dnd', 'invisible'].includes(presence)) throw new Error('Statut inconnu');
       u.presence = presence;
     }
+    if (statusEmoji !== undefined) {
+      const e = clean(statusEmoji, 64);
+      if (e && !/^(\p{Extended_Pictographic}|\p{Emoji_Component}|\u200d|\ufe0f|<:\w{2,32}:\w{1,24}>)+$/u.test(e)) throw new Error('Emoji de statut invalide');
+      u.statusEmoji = e;
+    }
     if (customStatus !== undefined) u.customStatus = clean(customStatus, 80);
+    if (statusExpires !== undefined) {
+      const exp = statusExpires ? new Date(statusExpires) : null;
+      if (exp && (isNaN(exp) || exp <= new Date())) throw new Error('Date d\'expiration invalide');
+      u.statusExpires = exp ? exp.toISOString() : null;
+    }
+    if (!u.customStatus && !u.statusEmoji) u.statusExpires = null;
     if (about !== undefined) u.about = clean(about, 190);
     if (color !== undefined) { if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Couleur invalide'); u.color = color; }
     if (avatar !== undefined) {
@@ -741,7 +829,8 @@ const handlers = {
   },
 };
 
-const ownProfile = u => ({ presence: u.presence || 'online', customStatus: u.customStatus || '', about: u.about || '', avatar: fileUrl(u.avatar), color: u.color });
+const ownProfile = u => ({ presence: u.presence || 'online', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji,
+  statusExpires: statusExpired(u) ? null : u.statusExpires || null, about: u.about || '', avatar: fileUrl(u.avatar), color: u.color });
 
 function login(ws, u, token) {
   if (!token) { token = crypto.randomBytes(24).toString('hex'); db.sessions[token] = u.id; save(); }

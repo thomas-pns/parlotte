@@ -15,3 +15,6 @@ form{display:flex;gap:8px}input{flex:1;min-width:0;background:#1e1f22;color:#fff
 .foot{text-align:center;color:#949ba4;font-size:13px;margin-top:20px}
 .link{background:none;color:#00a8fc;padding:0;text-align:left;font-size:13px}.link:hover{text-decoration:underline}
 .ok{background:#1f4d2e;color:#d1f3dc;border-radius:8px;padding:8px 12px;margin:0;font-size:13px}
+.update{background:#1f4d2e;color:#d1f3dc;border-radius:8px;padding:10px 14px;margin:0 0 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.update .primary{padding:6px 12px}
+kbd{background:#1e1f22;border-radius:3px;padding:0 4px;font:12px system-ui}
