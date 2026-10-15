@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'">
+<title>Partager mon écran</title>
+<link rel="stylesheet" href="launcher.css">
+<style>body{display:block;padding:18px}h2{color:#fff;margin:0 0 4px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin:14px 0}
+.src{background:#2b2d31;border:2px solid transparent;border-radius:8px;padding:8px;color:#dbdee1;text-align:left}.src:hover,.src.on{border-color:#5865f2}
+.src img{width:100%;aspect-ratio:16/9;object-fit:contain;background:#000;border-radius:4px;display:block}.src span{display:block;margin-top:6px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;background:#1e1f22;padding-top:8px}.ghost{background:#4e5058;color:#fff;border-radius:6px;padding:10px 16px}</style>
+</head>
+<body>
+<h2>🖥️ Que veux-tu partager ?</h2><p style="color:#b5bac1;margin:0">Un écran entier ou une seule fenêtre.</p>
+<div class="grid" id="grid"></div>
+<div class="bar"><button class="ghost" id="cancel">Annuler</button><button class="primary" id="go" disabled>Partager</button></div>
+<script src="picker.js"></script>
+</body>
+</html>

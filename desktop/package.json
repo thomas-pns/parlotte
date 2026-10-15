@@ -1,0 +1,58 @@
+{
+  "name": "parlotte",
+  "productName": "Parlotte",
+  "version": "1.0.0",
+  "description": "Discussions, vocal et vidéo entre amis",
+  "main": "main.js",
+  "author": "Thomas",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win dir --x64 && node seticon.mjs dist/win-unpacked/Parlotte.exe build/icon.ico"
+  },
+  "build": {
+    "appId": "fr.parlotte.app",
+    "productName": "Parlotte",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "ui/**",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../server",
+        "to": "server",
+        "filter": [
+          "**/*",
+          "!data.json",
+          "!cert.json",
+          "!uploads/**",
+          "!data-*.json"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Parlotte"
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.0",
+    "resedit": "^2.0.0",
+    "pe-library": "^1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomas-pns/parlotte.git"
+  }
+}

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parlotte</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#1e1f22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Parlotte">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>try { const p = JSON.parse(localStorage.getItem('parlotte-prefs') || '{}'); document.documentElement.dataset.theme = p.theme || 'dark'; if (p.fs) document.documentElement.style.setProperty('--fs', p.fs + 'px'); } catch {}</script>
+</head>
+<body>
+
+<!-- Connexion / inscription -->
+<section id="auth" hidden>
+  <form id="auth-form" class="card">
+    <h1>Parlotte</h1>
+    <p id="auth-sub">Content de te revoir !</p>
+    <label>Pseudo <input id="auth-user" autocomplete="username" required maxlength="24"></label>
+    <label>Mot de passe <input id="auth-pass" type="password" autocomplete="current-password" required minlength="6"></label>
+    <p id="auth-err" class="err"></p>
+    <button id="auth-btn" class="primary" type="submit">Se connecter</button>
+    <p class="small"><a href="#" id="auth-switch">Pas de compte ? S'inscrire</a></p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <nav id="servers" aria-label="Serveurs"></nav>
+  <aside id="sidebar">
+    <header id="side-head"></header>
+    <button id="qs-open" class="qs-open" title="Aller à un salon, un ami… (Ctrl+K)">Aller à… <kbd>Ctrl K</kbd></button>
+    <div id="side-list"></div>
+    <div id="voice-panel" hidden>
+      <div class="vp-info"><b id="vp-status">Connecté au vocal</b><small id="vp-where"></small></div>
+      <button id="vp-leave" title="Quitter le vocal">📞</button>
+    </div>
+    <footer id="me"></footer>
+  </aside>
+  <main id="chat">
+    <header id="chat-head">
+      <button id="menu" title="Salons" aria-label="Afficher les salons">☰</button>
+      <span id="chan-title"></span><span id="chan-topic"></span>
+      <div class="search-box">
+        <input id="q" placeholder="Rechercher" autocomplete="off" aria-label="Rechercher">
+        <ul id="sugg"></ul>
+      </div>
+      <button id="threads-btn" title="Fils de discussion" hidden>🧵</button>
+      <button id="pins" title="Messages épinglés">📌</button>
+      <button id="call" title="Lancer un appel vocal" hidden>📞</button>
+      <button id="toggle-members" title="Membres">👥</button>
+    </header>
+    <div id="stage-bar" hidden><b></b><button id="stage-toggle">Réduire</button></div>
+    <div id="stage" hidden></div>
+    <div id="view"></div>
+    <button id="jump-present" hidden>Aller au présent ↓</button>
+    <div id="typing"></div>
+    <form id="composer">
+      <div id="reply-bar" hidden><span></span><button type="button" id="cancel-reply">✕</button></div>
+      <ul id="msugg" hidden></ul>
+      <div id="pending" hidden></div>
+      <div id="rec-bar" hidden><span class="rec-dot"></span><span id="rec-time">0:00</span><canvas id="rec-wave" width="300" height="32"></canvas>
+        <button type="button" id="rec-cancel" title="Annuler">✕</button><button type="button" id="rec-send" title="Envoyer">➤</button></div>
+      <div class="input-row">
+        <button type="button" id="attach" title="Joindre des fichiers (ou glisse-les ici, ou colle une image)">＋</button>
+        <textarea id="input" rows="1" placeholder="Envoyer un message"></textarea>
+        <button type="button" id="emoji-btn" title="Emojis">😀</button>
+        <button type="button" id="poll-btn" title="Créer un sondage">📊</button>
+        <button type="button" id="rec-btn" title="Enregistrer un message vocal">🎙️</button>
+        <input type="file" id="file" multiple hidden>
+      </div>
+    </form>
+  </main>
+  <aside id="results" hidden>
+    <header><span id="res-count"></span><button id="close-results">✕</button></header>
+    <div id="res-list"></div>
+  </aside>
+  <aside id="members" aria-label="Membres"></aside>
+</div>
+
+<div id="ring" hidden><div class="ring-av"></div><div><b id="ring-name"></b><small>t'appelle…</small></div>
+  <button id="ring-accept" title="Répondre">📞</button><button id="ring-decline" title="Refuser">✖</button></div>
+<div id="audios" hidden></div>
+<div id="conn" hidden>Connexion au serveur perdue… reconnexion</div>
+<div id="toast" hidden></div>
+<div id="picker" hidden></div>
+<div id="drop" hidden>Dépose tes fichiers pour les envoyer</div>
+<div id="lightbox" hidden><img alt=""><a download target="_blank">Ouvrir l'original</a></div>
+<div id="card" hidden></div>
+<dialog id="profile-dlg"><form method="dialog" id="profile-form">
+  <h3>Mon profil</h3>
+  <div class="prof-top"><div id="prof-av"></div><div>
+    <button type="button" class="primary" id="prof-upload">Changer la photo</button>
+    <button type="button" id="prof-remove" class="small">Retirer</button>
+    <input type="file" id="prof-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden></div></div>
+  <label>Statut <select id="prof-presence">
+    <option value="online">🟢 En ligne</option><option value="idle">🌙 Absent</option>
+    <option value="dnd">⛔ Ne pas déranger</option><option value="invisible">⚪ Invisible</option></select></label>
+  <label>Message perso <input id="prof-custom" maxlength="80" placeholder="En train de jouer à Krunker…"></label>
+  <label>À propos de moi <textarea id="prof-about" maxlength="190" rows="3"></textarea></label>
+  <label>Couleur <input type="color" id="prof-color"></label>
+  <menu><button value="cancel">Annuler</button><button value="ok" class="primary">Enregistrer</button></menu>
+</form></dialog>
+<dialog id="srv-dlg" class="big"><div class="srv-wrap"><nav id="srv-tabs"></nav><div id="srv-body"></div><button id="srv-close" title="Fermer">✕</button></div></dialog>
+<dialog id="chan-dlg" class="big"><div id="chan-body"></div></dialog>
+<dialog id="poll-dlg"><form method="dialog" id="poll-form">
+  <h3>📊 Créer un sondage</h3>
+  <label class="fld">Question <input id="poll-q" maxlength="300" placeholder="On joue à quoi ce soir ?" required></label>
+  <div class="fld">Réponses<div id="poll-answers"></div><button type="button" id="poll-add" class="small">+ Ajouter une réponse</button></div>
+  <div class="row"><label class="fld" style="margin:0">Durée <select id="poll-hours">
+    <option value="1">1 heure</option><option value="4">4 heures</option><option value="8">8 heures</option>
+    <option value="24" selected>24 heures</option><option value="72">3 jours</option><option value="168">1 semaine</option></select></label>
+  <label class="chk"><input type="checkbox" id="poll-multi"> Plusieurs réponses possibles</label></div>
+  <p id="poll-err" class="err"></p>
+  <menu><button value="cancel" formnovalidate>Annuler</button><button value="ok" class="primary" id="poll-ok">Publier</button></menu>
+</form></dialog>
+<dialog id="settings-dlg" class="big"><div id="settings-body"></div></dialog>
+<dialog id="qs"><input id="qs-input" placeholder="Où veux-tu aller ? (salon, ami, serveur…)" autocomplete="off"><ul id="qs-list"></ul>
+  <p class="small">↑↓ pour choisir · Entrée pour y aller · Échap pour fermer</p></dialog>
+<dialog id="dlg"><form method="dialog"><h3 id="dlg-title"></h3><p id="dlg-text" class="small"></p><input id="dlg-input"><menu><button value="cancel">Annuler</button><button value="ok" id="dlg-ok">OK</button></menu></form></dialog>
+<script src="search.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

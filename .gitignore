@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# Données personnelles : ne jamais publier
+data.json
+data-*.json
+data.json.tmp
+cert.json
+uploads/
+*.log

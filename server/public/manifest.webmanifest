@@ -1,0 +1,16 @@
+{
+  "name": "Parlotte",
+  "short_name": "Parlotte",
+  "description": "Discussions, vocal et vidéo entre amis",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#313338",
+  "theme_color": "#1e1f22",
+  "lang": "fr",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

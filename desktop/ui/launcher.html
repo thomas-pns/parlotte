@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'">
+<title>Parlotte</title>
+<link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+<main>
+  <div class="logo"><img src="../build/icon.png" alt=""><h1>Parlotte</h1><p>Discute, parle et partage avec tes amis.</p></div>
+  <p id="error" class="error" hidden></p>
+  <div class="cards">
+    <section class="card">
+      <h2>🖥️ Héberger</h2>
+      <p>Ton PC devient le serveur : tes comptes, serveurs et messages restent chez toi. Tes amis sur le même wifi te rejoignent avec l'adresse que l'app leur donne.</p>
+      <button id="host" class="primary">Héberger sur ce PC</button>
+      <button id="import" class="link">📥 Importer mes données de l'ancienne version…</button>
+      <p id="import-msg" class="ok" hidden></p>
+    </section>
+    <section class="card">
+      <h2>🔗 Rejoindre</h2>
+      <p>Connecte-toi au Parlotte d'un ami. Demande-lui son adresse (ex. <code>192.168.1.23</code>).</p>
+      <form id="join-form"><input id="url" placeholder="Adresse du serveur" autocomplete="off" spellcheck="false"><button class="primary green" type="submit">Rejoindre</button></form>
+      <div id="recent"></div>
+    </section>
+  </div>
+  <p class="foot">Tu pourras changer plus tard : icône Parlotte près de l'horloge → « Changer de serveur… ». <span id="ver"></span></p>
+</main>
+<script src="launcher.js"></script>
+</body>
+</html>

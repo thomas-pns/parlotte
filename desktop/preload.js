@@ -1,0 +1,21 @@
+'use strict';
+// Pont minimal et sûr entre les pages et l'application (aucun accès direct à Node).
+const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('parlotteDesktop', {
+  isDesktop: true,
+  platform: process.platform,
+  // écran d'accueil
+  state: () => ipcRenderer.invoke('launcher:state'),
+  host: () => ipcRenderer.send('launcher:host'),
+  join: url => ipcRenderer.send('launcher:join', String(url || '')),
+  importData: () => ipcRenderer.invoke('launcher:import'),
+  // depuis Parlotte
+  openLauncher: () => ipcRenderer.send('app:launcher'),
+  showAddresses: () => ipcRenderer.send('app:addresses'),
+  info: () => ipcRenderer.invoke('app:info'),
+  setBadge: n => ipcRenderer.send('app:badge', Number(n) || 0),
+  attention: () => ipcRenderer.send('app:attention'),
+  // sélecteur de partage d'écran
+  onSources: cb => ipcRenderer.on('picker:sources', (e, list) => cb(list)),
+  choose: id => ipcRenderer.send('picker:choose', id),
+});
