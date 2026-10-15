@@ -79,7 +79,7 @@ function handle(m) {
       P = m.P || P;
       st.blocked = m.blocked || [];
       Object.assign(st, { users: m.users, servers: m.servers, dms: m.dms, friends: m.friends, incoming: m.incoming, outgoing: m.outgoing, lastByChannel: m.lastByChannel, voice: m.voice || {},
-        previews: m.previews || {}, activity: m.activity || [] });
+        previews: m.previews || {}, activity: m.activity || [], stories: m.stories || [] });
       for (const [c, ts] of Object.entries(m.lastByChannel)) if (!st.unread[c] && ts > (st.read[c] || '') && c !== st.view.channel) st.unread[c] = '•';
       if (!isSpecial(st.view.server) && !server()) Object.assign(st.view, { server: '@me', channel: null });
       if (st.view.channel && !channel()) st.view.channel = st.view.server === '@me' ? null : firstText(server());
@@ -131,6 +131,8 @@ function handle(m) {
     case 'activitySeen': (st.activity || []).forEach(a => (a.seen = true)); renderRail(); break;
     case 'activityRemoved': st.activity = (st.activity || []).filter(a => a.id !== m.id); renderRail(); if (st.view.server === '@activity') renderMain(); break;
     case 'sound': onSound(m); break;
+    case 'story': onStory(m.story); break;
+    case 'storyRemoved': onStoryRemoved(m.id); break;
   }
   if (p) p.resolve(m);
 }

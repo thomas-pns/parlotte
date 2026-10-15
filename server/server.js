@@ -43,6 +43,7 @@ let db;
 try { db = Object.assign(empty(), JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))); } catch { db = empty(); }
 let migrated = false;
 if (!db.activity) { db.activity = {}; migrated = true; }
+if (!db.stories) { db.stories = []; migrated = true; }
 for (const s of Object.values(db.servers)) {
   if (!s.channels.some(c => db.channels[c]?.type === 'voice')) {
     migrated = true;
@@ -185,8 +186,50 @@ function bootstrap(uid) {
     incoming: rel.filter(f => !f.accepted && f.to === uid).map(f => f.from),
     outgoing: rel.filter(f => !f.accepted && f.from === uid).map(f => f.to),
     activity: (db.activity[uid] || []).slice(0, 60).map(publicActivity),
+    stories: storiesFor(uid),
   };
 }
+
+// ---------------------------------------------------------------- Stories (24 h, visibles par les potes)
+const STORY_MS = 24 * 3600e3;
+const storyLive = x => new Date(x.expires) > new Date();
+const canSeeStory = (uid, x) => x.author === uid || (friendsOf(x.author).includes(uid) && !blocked(uid, x.author));
+function publicStory(x, uid) {
+  const out = { id: x.id, author: x.author, url: `/uploads/${x.file}`, kind: x.kind, created: x.created, expires: x.expires,
+    seen: x.author === uid || !!x.views[uid], liked: x.likes.includes(uid),
+    stickers: x.stickers.map(k => k.type !== 'poll' ? k : { ...k, answers: k.answers.map(a => ({ id: a.id, text: a.text, count: a.votes.length, mine: a.votes.includes(uid) })) }) };
+  if (x.author === uid) out.viewers = Object.entries(x.views).map(([u, at]) => ({ id: u, at, liked: x.likes.includes(u) })).sort((a, b) => b.at.localeCompare(a.at));
+  return out;
+}
+const storiesFor = uid => db.stories.filter(x => storyLive(x) && canSeeStory(uid, x)).map(x => publicStory(x, uid));
+const storyAudience = x => [x.author, ...friendsOf(x.author)].filter(u => !blocked(u, x.author));
+function storyChanged(x, only) {
+  for (const u of only || storyAudience(x)) sendTo(u, { t: 'story', story: publicStory(x, u) });
+}
+function findStory(uid, storyId) {
+  const x = db.stories.find(y => y.id === storyId);
+  if (!x || !storyLive(x) || !canSeeStory(uid, x)) throw new Error('Cette story n\'est plus disponible');
+  return x;
+}
+function cleanStickers(list) {
+  const num = (v, a, b, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d; };
+  return (Array.isArray(list) ? list : []).slice(0, 8).map(k => {
+    const base = { x: num(k?.x, 0, 1, 0.5), y: num(k?.y, 0, 1, 0.5), rot: num(k?.rot, -30, 30, 0) };
+    if (k?.type === 'poll') {
+      const answers = (Array.isArray(k.answers) ? k.answers : []).map(a => clean(a, 30)).filter(Boolean).slice(0, 4);
+      const question = clean(k.question, 60);
+      if (!question || answers.length < 2) return null;
+      return { type: 'poll', ...base, question, answers: answers.map((text, i) => ({ id: String(i + 1), text, votes: [] })) };
+    }
+    const text = clean(k?.text, 80); if (!text) return null;
+    return { type: 'text', ...base, text, color: /^#[0-9a-f]{6}$/i.test(k.color) ? k.color : '#ffffff',
+      bg: /^#[0-9a-f]{6}$/i.test(k.bg) ? k.bg : null, size: num(k.size, 14, 56, 28) };
+  }).filter(Boolean);
+}
+setInterval(() => { // ménage : les stories expirées disparaissent (les fichiers restent dans les messages qui y répondent)
+  const before = db.stories.length; db.stories = db.stories.filter(storyLive);
+  if (db.stories.length !== before) save();
+}, 10 * 60e3).unref();
 
 // ---------------------------------------------------------------- Activité (invitations, mentions, j'aime)
 const publicActivity = a => (a.type === 'invite' ? { ...a, gone: !db.servers[a.serverId], serverName: db.servers[a.serverId]?.name || a.serverName,
@@ -870,6 +913,58 @@ const handlers = {
     }
     lastSound.set(ws.uid, Date.now());
     for (const [, v] of room) v.ws.send({ t: 'sound', channelId: ws.voice, userId: ws.uid, sound });
+  },
+
+  // --- Stories
+  postStory(ws, { fileId, stickers }) {
+    const f = db.uploads[fileId];
+    if (!f || f.owner !== ws.uid || !/^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(f.content_type)) throw new Error('Une story doit être une photo ou une vidéo');
+    if (db.stories.filter(x => x.author === ws.uid && storyLive(x)).length >= 30) throw new Error('30 stories en même temps maximum');
+    const x = { id: id(), author: ws.uid, file: f.id, kind: f.content_type.startsWith('video/') ? 'video' : 'image', created: now(),
+      expires: new Date(Date.now() + STORY_MS).toISOString(), stickers: cleanStickers(stickers), views: {}, likes: [] };
+    db.stories.push(x); save(); storyChanged(x);
+    return { t: 'storyPosted', story: publicStory(x, ws.uid) };
+  },
+  viewStory(ws, { storyId }) {
+    const x = findStory(ws.uid, storyId); if (x.author === ws.uid || x.views[ws.uid]) return;
+    x.views[ws.uid] = now(); save(); storyChanged(x, [ws.uid, x.author]);
+  },
+  likeStory(ws, { storyId }) {
+    const x = findStory(ws.uid, storyId); if (x.author === ws.uid) return;
+    const i = x.likes.indexOf(ws.uid);
+    if (i >= 0) x.likes.splice(i, 1);
+    else {
+      x.likes.push(ws.uid);
+      if (!(db.activity[x.author] || []).some(a => a.type === 'storylike' && a.storyId === x.id && a.from === ws.uid))
+        pushActivity(x.author, { type: 'storylike', from: ws.uid, storyId: x.id, url: `/uploads/${x.file}`, kind: x.kind });
+    }
+    save(); storyChanged(x, [ws.uid, x.author]);
+  },
+  voteStory(ws, { storyId, sticker, answer }) {
+    const x = findStory(ws.uid, storyId), k = x.stickers[Number(sticker)];
+    if (!k || k.type !== 'poll') throw new Error('Sondage introuvable');
+    const a = k.answers.find(y => y.id === String(answer)); if (!a) throw new Error('Réponse inconnue');
+    k.answers.forEach(y => { y.votes = y.votes.filter(u => u !== ws.uid); });
+    a.votes.push(ws.uid); save(); storyChanged(x);
+  },
+  deleteStory(ws, { storyId }) {
+    const x = db.stories.find(y => y.id === storyId);
+    if (!x || x.author !== ws.uid) throw new Error('Tu ne peux supprimer que tes stories');
+    const aud = storyAudience(x);
+    db.stories = db.stories.filter(y => y !== x); save();
+    broadcast(aud, { t: 'storyRemoved', id: x.id });
+  },
+  replyStory(ws, { storyId, text }) {
+    const x = findStory(ws.uid, storyId);
+    if (x.author === ws.uid) throw new Error('Tu ne peux pas répondre à ta propre story');
+    const content = clean(text, 2000); if (!content) throw new Error('Écris une réponse');
+    const { channel } = handlers.openDM(ws, { userId: x.author });
+    const ch = db.channels[channel];
+    const m = { id: id(), channel_id: channel, author_id: ws.uid, timestamp: now(), content, reactions: {}, mentions: [],
+      story: { id: x.id, author: x.author, url: `/uploads/${x.file}`, kind: x.kind } };
+    db.messages.push(m); save();
+    broadcast(audienceOf(ch), { t: 'message', message: m });
+    return { t: 'opened', server: '@me', channel };
   },
 
   // --- Blocage

@@ -40,6 +40,7 @@ entre eux : utilise un partage de connexion ou le wifi de la maison.
 | | |
 |---|---|
 | 🧭 **Deux espaces** | **Potes** (façon messages privés : bulles, « Vu », double-clic = ❤️, groupes, notes au-dessus des avatars) et **Serveurs** (communautés, salons, rôles) — plus **Activité** (invitations, mentions, j'aime) |
+| 📸 **Stories** | appareil photo intégré (appui = photo, maintien = vidéo 15 s) ou galerie, texte et sondage à placer, visibles 24 h par tes potes, « Vu par », cœurs, réponses en message privé |
 | 💬 **Discussion** | serveurs, salons, fils de discussion, messages privés et groupes, invitations d'amis sur un serveur, réponses, réactions, épinglés, mentions `@`, `@everyone` |
 | 🎙️ **Vocal & vidéo** | salons vocaux, appels privés, caméra, partage d'écran, messages vocaux |
 | 🎵 **Vocal+** | soundboard (8 sons intégrés + sons perso par serveur), appuyer pour parler, sensibilité du micro, suppression du bruit, choix du micro et de la sortie, volume par personne |
