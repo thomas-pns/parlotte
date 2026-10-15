@@ -106,7 +106,7 @@ document.body.insertAdjacentHTML('beforeend', `
   <div class="s-bottom cam">
     <div class="cam-side"><label class="s-ico gal" title="Choisir une photo ou une vidéo du téléphone">${SI.gallery}<input type="file" id="scam-file" accept="image/*,video/*" hidden><span class="sr">Galerie</span></label>
     <button class="s-ico" id="scam-mem" title="Mes souvenirs" aria-label="Mes souvenirs">${SI.memories}</button></div>
-    <button id="scam-shutter" aria-label="Appuie pour une photo, maintiens pour filmer"><i></i></button>
+    <button id="scam-shutter" aria-label="Appuie pour une photo, maintiens pour filmer"><svg class="sh-ring" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="47"/></svg><i></i></button>
     <span class="s-hint">Appuie : photo<br>Maintiens : vidéo</span>
   </div></div>
 </div>
@@ -282,9 +282,23 @@ function openEditor(file, kind, opts = {}) {
   $('#sedit-save span').textContent = opts.memoryId ? 'Supprimer' : 'Souvenirs';
   $('#sedit-media').innerHTML = kind === 'video' ? `<video src="${esc(src)}" autoplay loop playsinline muted></video><button class="s-ico s-sound" data-ed-sound aria-label="Activer le son">${SI.muted}</button>` : `<img class="s-fill" src="${esc(src)}" alt="" aria-hidden="true"><img class="s-main" src="${esc(src)}" alt="">`;
   replay($('#sedit-stage'), 'opening');
-  $('#sedit-media video')?.play().catch(() => {});
   $('#sedit').hidden = false; document.body.classList.add('story-open');
+  const v = $('#sedit-media video'); if (v) kickVideo(v);
   renderStickers($('#sedit-layer'), ed.stickers, { edit: true });
+}
+// iPhone : une vidéo ne démarre seule que si elle est déjà visible et vraiment muette ; sinon on
+// réessaie quand elle est prête, et en dernier recours un gros bouton ▶ apparaît (un toucher suffit).
+function kickVideo(v) {
+  v.muted = true; v.defaultMuted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+  const go = () => v.play().catch(() => {});
+  go(); v.addEventListener('loadeddata', go, { once: true }); v.addEventListener('canplay', go, { once: true });
+  setTimeout(() => {
+    if (!v.isConnected || !v.paused) return;
+    const btn = document.createElement('button'); btn.className = 'v-kick'; btn.setAttribute('aria-label', 'Lire la vidéo'); btn.innerHTML = SI.play || '▶';
+    v.parentElement.appendChild(btn);
+    btn.onclick = e => { e.stopPropagation(); v.play().then(() => btn.remove(), () => {}); };
+    v.addEventListener('playing', () => btn.remove(), { once: true });
+  }, 900);
 }
 function closeEditor() {
   $('#sedit').hidden = true; $('#sedit-media').innerHTML = ''; $('#sedit-input').hidden = true;
@@ -610,9 +624,14 @@ function openMemories() {
   $('#smem').hidden = false; replay($('#smem .msheet'), 'opening');
 }
 $('#scam-mem').onclick = openMemories;
-$('#smem-close').onclick = () => { $('#smem').hidden = true; };
+// Fermeture en douceur : la feuille redescend et le fond s'efface
+function closeMemories() {
+  const w = $('#smem'); if (w.hidden || w.classList.contains('closing')) return;
+  w.classList.add('closing'); setTimeout(() => { w.hidden = true; w.classList.remove('closing'); }, 260);
+}
+$('#smem-close').onclick = closeMemories;
 $('#smem').addEventListener('click', e => {
-  if (e.target === $('#smem')) { $('#smem').hidden = true; return; }
+  if (e.target === $('#smem')) return closeMemories();
   const c = e.target.closest('[data-mem]'); if (!c) return;
   const m = (st.memories || []).find(x => x.id === c.dataset.mem); if (!m) return;
   $('#smem').hidden = true; stopCamera(); $('#scam').hidden = true;

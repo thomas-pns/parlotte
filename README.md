@@ -30,8 +30,16 @@ Tout tourne chez vous : un PC héberge, les autres le rejoignent.</p>
 - La première fois, l'app montre l'empreinte du certificat de l'hébergeur : clique sur **Faire confiance**.
 - Crée ton compte, ajoute tes amis, rejoins un serveur avec son code d'invitation.
 
-Il faut être **sur le même wifi**. Les wifi d'école ou publics bloquent souvent les appareils
+Par défaut, il faut être **sur le même wifi**. Les wifi d'école ou publics bloquent souvent les appareils
 entre eux : utilise un partage de connexion ou le wifi de la maison.
+
+**🌍 De partout, et sur téléphone comme une vraie appli** (depuis la 1.6) :
+- Sur le PC qui héberge, installe [Tailscale](https://tailscale.com/download) (gratuit) et connecte-toi.
+- Dans Parlotte : **Paramètres → Application → Accès de partout → Activer**. Tu obtiens une adresse
+  `https://<ton-pc>.<…>.ts.net` avec un vrai cadenas, et un QR code.
+- Tes potes l'ouvrent de n'importe où. Sur **iPhone** : Safari → Partager → « Sur l'écran d'accueil ».
+  Sur **Android** : « Installer l'application ». Puis **Paramètres → Notifications → Activer** pour
+  être prévenu des messages, mentions et appels même appli fermée.
 
 <br clear="right">
 
@@ -47,6 +55,10 @@ entre eux : utilise un partage de connexion ou le wifi de la maison.
 | 📅 **Événements** | « Soirée Krunker samedi 21 h » : qui vient, rappel 15 min avant, visibles sur la carte du serveur |
 | ⭕ **Morpion** | une partie dans n'importe quelle conversation (menu ＋) |
 | 📞 **Écran d'appel** | plein écran sur téléphone, grands avatars qui s'illuminent, vidéos et gros boutons |
+| 🧭 **Navigation façon Discord** | dans un serveur, colonne d'icônes à gauche ; sur téléphone, le salon glisse au doigt pour montrer serveurs et salons, appui long sur un message pour ses actions |
+| 🔔 **Notifications push** | sur téléphone, même appli fermée (messages privés, mentions, appels), avec l'accès de partout |
+| 🖼️ **Visionneuse et lecteurs** | photos : zoom, glisser pour fermer, photo suivante ; lecteurs vidéo et son maison |
+| ⚙️ **Paramètres** | rangés par catégories (Mon compte, Profil, Apparence, Notifications, Voix…), changer de pseudo ou de mot de passe, déconnecter les autres appareils |
 | 🛟 **Sauvegardes** | copie automatique toutes les 6 h quand tu héberges, restauration en un clic (icône de la barre des tâches ou Paramètres) |
 | 💬 **Discussion** | serveurs, salons, fils de discussion, messages privés et groupes, invitations d'amis sur un serveur, réponses, réactions, épinglés, mentions `@`, `@everyone` |
 | 🎙️ **Vocal & vidéo** | salons vocaux, appels privés, caméra, partage d'écran, messages vocaux |
@@ -90,3 +102,4 @@ Licence MIT.
 ## Crédits
 
 Les messages vocaux sont convertis en MP3 dans le navigateur avec [lamejs](https://github.com/zhuker/lamejs) (LGPL, basé sur [LAME](https://lame.sourceforge.io)), fourni tel quel dans `server/public/vendor/`.
+Les QR codes sont dessinés avec [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) de Kazuhiko Arase (MIT), dans `server/public/vendor/qrcode.js`.

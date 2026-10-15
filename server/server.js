@@ -11,6 +11,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const HTTPS_PORT = Number(process.env.HTTPS_PORT) || PORT + 443; // 3443 par défaut
 const https = require('https');
 const { generateCertificate } = require('./cert');
+const webpush = require('./webpush');
 const PUBLIC = path.join(__dirname, 'public');
 // Dossier des données : à côté du serveur par défaut, ou celui choisi par l'application de bureau.
 const DATA_DIR = process.env.PARLOTTE_DATA || __dirname;
@@ -43,6 +44,8 @@ let db;
 try { db = Object.assign(empty(), JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))); } catch { db = empty(); }
 let migrated = false;
 if (!db.activity) { db.activity = {}; migrated = true; }
+if (!db.vapid) { db.vapid = webpush.makeVapid(); migrated = true; }
+if (!db.push) { db.push = {}; migrated = true; }
 if (!db.stories) { db.stories = []; migrated = true; }
 if (!db.memories) { db.memories = []; migrated = true; }
 if (!db.events) { db.events = []; migrated = true; }
@@ -111,7 +114,7 @@ const activityOf = uid => {
   return null;
 };
 const fileUrl = fid => (fid && db.uploads[fid] ? `/uploads/${fid}` : null);
-const publicUser = u => ({ id: u.id, name: u.name, color: u.color, status: status(u.id), bot: !!u.bot,
+const publicUser = u => ({ id: u.id, name: u.name, color: u.color, status: status(u.id), bot: !!u.bot, created: u.created,
   avatar: fileUrl(u.avatar), about: u.about || '', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji, activity: activityOf(u.id),
   banner: fileUrl(u.banner), accent: u.accent || null, pronouns: u.pronouns || '', highlights: (u.highlights || []).length });
 const serversOf = uid => Object.values(db.servers).filter(s => s.members.includes(uid));
@@ -300,6 +303,34 @@ function addToServer(s, uid) {
   save(); refresh(s.members); broadcast(audienceOf(first), { t: 'message', message: m });
 }
 
+// ---------------------------------------------------------------- Notifications push (téléphone, appli fermée)
+// On n'envoie que si la personne n'a pas Parlotte ouvert et visible quelque part, et pas en « Ne pas déranger ».
+function notify(uid, data) {
+  const subs = db.push[uid]; if (!subs?.length) return;
+  if (db.users[uid]?.presence === 'dnd') return;
+  if ([...(online.get(uid) || [])].some(ws => ws.visible)) return;
+  for (const sub of [...subs]) {
+    webpush.sendPush(db.vapid, sub, data, { topic: data.tag }).then(code => {
+      if (code === 404 || code === 410) { db.push[uid] = (db.push[uid] || []).filter(x => x.endpoint !== sub.endpoint); save(); }
+    }).catch(() => {});
+  }
+}
+const attLabel = m => m.content ? excerpt(m.content, 140) : m.attachments?.[0]?.voice ? '🎙️ Message vocal' : m.attachments?.length
+  ? (/^image\//.test(m.attachments[0].content_type) ? '📷 Photo' : /^video\//.test(m.attachments[0].content_type) ? '🎬 Vidéo' : '📎 Fichier') : m.story ? '💬 a répondu à ta story' : 'Nouveau message';
+function notifyMessage(ch, m) {
+  const author = db.users[m.author_id]; if (!author) return;
+  const icon = fileUrl(author.avatar) || '/icon-192.png';
+  if (ch.type === 'dm') {
+    const title = ch.group ? `${author.name} · ${ch.name || 'Groupe'}` : author.name;
+    ch.members.filter(u => u !== m.author_id && !blocked(u, m.author_id)).forEach(u =>
+      notify(u, { title, body: m.story ? `💬 Ta story : ${attLabel({ ...m, story: null })}` : attLabel(m), tag: ch.id, url: `/?c=${ch.id}`, icon }));
+  } else {
+    const srv = db.servers[serverOfChannel(ch)];
+    (m.mentions || []).filter(u => u !== m.author_id && !blocked(u, m.author_id)).forEach(u =>
+      notify(u, { title: `${author.name} · #${ch.name}${srv ? ' · ' + srv.name : ''}`, body: attLabel(m), tag: ch.id, url: `/?c=${ch.id}`, icon }));
+  }
+}
+
 // ---------------------------------------------------------------- Diffusion
 function sendTo(uid, msg) { const set = online.get(uid); if (set) for (const ws of set) ws.send(msg); }
 function broadcast(uids, msg) { new Set(uids).forEach(u => sendTo(u, msg)); }
@@ -430,6 +461,53 @@ const handlers = {
     return login(ws, db.users[uid], token);
   },
   logout(ws, { token }) { delete db.sessions[token]; save(); ws.close(); },
+  // --- Mon compte (1.6)
+  changePassword(ws, { oldPassword, newPassword, token }) {
+    const u = db.users[ws.uid];
+    if (!checkPassword(u, String(oldPassword || ''))) throw new Error('Mot de passe actuel incorrect');
+    if (String(newPassword || '').length < 6) throw new Error('Nouveau mot de passe : 6 caractères minimum');
+    Object.assign(u, hashPassword(String(newPassword)));
+    // Les autres appareils sont déconnectés (sauf celui-ci)
+    for (const [t, uid] of Object.entries(db.sessions)) if (uid === u.id && t !== token) delete db.sessions[t];
+    save();
+    for (const other of online.get(u.id) || []) if (other !== ws) other.close();
+    return { ok: true };
+  },
+  logoutOthers(ws, { token }) {
+    let n = 0;
+    for (const [t, uid] of Object.entries(db.sessions)) if (uid === ws.uid && t !== token) { delete db.sessions[t]; n++; }
+    save();
+    for (const other of online.get(ws.uid) || []) if (other !== ws) other.close();
+    return { closed: n };
+  },
+  renameMe(ws, { username }) {
+    const name = clean(username, 24), u = db.users[ws.uid];
+    if (!validName(name)) throw new Error('Pseudo : 2 à 24 caractères (lettres, chiffres, _ . -)');
+    if (Object.values(db.users).some(x => x.id !== u.id && x.name.toLowerCase() === name.toLowerCase())) throw new Error('Ce pseudo est déjà pris');
+    u.name = name; save(); presenceChanged(u.id);
+    return { ok: true };
+  },
+  // --- Notifications push
+  pushKey() { return { key: db.vapid.publicKey }; },
+  pushSubscribe(ws, { sub }) {
+    if (!sub || typeof sub.endpoint !== 'string' || !/^https:\/\//.test(sub.endpoint) || sub.endpoint.length > 1000 || !sub.keys?.p256dh || !sub.keys?.auth) throw new Error('Abonnement invalide');
+    // Uniquement les vrais services de push (Google, Apple, Mozilla, Microsoft) : le serveur n'envoie rien ailleurs
+    const host = new URL(sub.endpoint).hostname;
+    const PUSH_HOSTS = /(^|\.)(fcm\.googleapis\.com|android\.googleapis\.com|push\.apple\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
+    if (!PUSH_HOSTS.test(host) && !(process.env.PARLOTTE_TEST_PUSH && host === 'localhost')) throw new Error('Service de notification inconnu');
+    const clean_ = { endpoint: sub.endpoint, keys: { p256dh: String(sub.keys.p256dh).slice(0, 200), auth: String(sub.keys.auth).slice(0, 60) } };
+    for (const [u, list] of Object.entries(db.push)) db.push[u] = list.filter(x => x.endpoint !== clean_.endpoint); // un appareil = un compte
+    db.push[ws.uid] = [...(db.push[ws.uid] || []), clean_].slice(-10); save();
+    return { ok: true };
+  },
+  pushUnsubscribe(ws, { endpoint }) { db.push[ws.uid] = (db.push[ws.uid] || []).filter(x => x.endpoint !== endpoint); save(); },
+  pushTest(ws) {
+    const subs = db.push[ws.uid] || []; if (!subs.length) throw new Error('Pas encore abonné sur cet appareil');
+    subs.forEach(sub => webpush.sendPush(db.vapid, sub, { title: 'Parlotte', body: 'Les notifications marchent 🎉', tag: 'test', url: '/' }).catch(() => {}));
+    return { ok: true, count: subs.length };
+  },
+  visible(ws, { on }) { ws.visible = !!on; },
+  sessionsCount(ws) { return { count: Object.values(db.sessions).filter(uid => uid === ws.uid).length }; },
 
   // --- Serveurs
   createServer(ws, { name }) {
@@ -616,6 +694,7 @@ const handlers = {
     if (replyTo && db.messages.some(x => x.id === replyTo && x.channel_id === channelId)) m.reply_to = replyTo;
     db.messages.push(m); save();
     broadcast(audience, { t: 'message', message: m });
+    notifyMessage(ch, m);
     if (ch.type === 'thread') threadActivity(ch);
     // Activité : mentions directes (@pseudo) dans les serveurs
     if (ch.type !== 'dm' && content) {
@@ -714,11 +793,11 @@ const handlers = {
     ws.voice = channelId;
     voiceChanged(channelId);
     if (ch.type === 'dm' && ch.group) {
-      if (!peers.length) ch.members.filter(u => u !== ws.uid).forEach(u => sendTo(u, { t: 'ring', channelId, from: ws.uid }));
+      if (!peers.length) ch.members.filter(u => u !== ws.uid).forEach(u => { sendTo(u, { t: 'ring', channelId, from: ws.uid }); notify(u, { title: `📞 ${db.users[ws.uid].name}`, body: `Appel de groupe · ${ch.name || 'Groupe'}`, tag: 'call-' + channelId, url: `/?c=${channelId}`, call: true }); });
     } else if (ch.type === 'dm') {
       const other = ch.members.find(m => m !== ws.uid);
       if (blocked(ws.uid, other)) { leaveVoice(ws); throw new Error('Impossible d\'appeler cette personne'); }
-      if (!room.has(other)) sendTo(other, { t: 'ring', channelId, from: ws.uid });
+      if (!room.has(other)) { sendTo(other, { t: 'ring', channelId, from: ws.uid }); notify(other, { title: `📞 ${db.users[ws.uid].name}`, body: 't\'appelle…', tag: 'call-' + channelId, url: `/?c=${channelId}`, call: true }); }
     }
     return { t: 'voiceJoined', channelId, peers };
   },
@@ -1025,6 +1104,7 @@ const handlers = {
       story: { id: x.id, author: x.author, url: `/uploads/${x.file}`, kind: x.kind } };
     db.messages.push(m); save();
     broadcast(audienceOf(ch), { t: 'message', message: m });
+    notifyMessage(ch, m);
     return { t: 'opened', server: '@me', channel };
   },
 
@@ -1376,7 +1456,8 @@ function upgrade(req, sock) {
 // HTTP : sur ce PC (localhost) tout marche, y compris le micro. Depuis un autre appareil,
 // on redirige vers HTTPS, seul moyen pour le navigateur d'autoriser le micro.
 const server = http.createServer((req, res) => {
-  if (!isLocal(req.headers.host)) {
+  const proxied = req.headers['x-forwarded-proto'] === 'https' || /\.ts\.net(:\d+)?$/i.test(String(req.headers.host || ''));
+  if (!isLocal(req.headers.host) && !proxied) {
     const host = String(req.headers.host || '').replace(/:\d+$/, '');
     res.writeHead(302, { Location: `https://${host}:${HTTPS_PORT}${req.url}` }); return res.end();
   }

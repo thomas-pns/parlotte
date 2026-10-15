@@ -223,6 +223,47 @@ function showAddresses() {
     detail: `${list || '(aucun réseau détecté)'}\n\nSur ton PC : http://localhost:${serverInfo.port}\n\nEmpreinte du certificat (pour vérifier) :\n${serverInfo.fingerprint}\n\nDans l'app Parlotte, ils choisissent « Rejoindre » et collent l'adresse. Dans un navigateur, ils acceptent l'avertissement de sécurité la première fois.`,
   }).then(r => { if (r.response === 0 && list) clipboard.writeText(list.split('\n')[0]); });
 }
+// ---------------------------------------------------------------- Accès de partout (Tailscale Funnel)
+// Avec Tailscale (gratuit), le PC qui héberge obtient une vraie adresse https://<pc>.<…>.ts.net, avec un
+// vrai certificat : tes potes peuvent se connecter de chez eux, installer Parlotte sur leur téléphone
+// et recevoir les notifications. On ne fait que piloter l'outil « tailscale » déjà installé.
+function tsBin() {
+  const cands = [process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Tailscale', 'tailscale.exe'), 'C:\\Program Files\\Tailscale\\tailscale.exe',
+    '/usr/bin/tailscale', '/usr/local/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'].filter(Boolean);
+  return cands.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+}
+function ts(args, timeout = 15000) {
+  return new Promise(res => {
+    const bin = tsBin(); if (!bin) return res({ code: -1, out: '', err: 'absent' });
+    execFile(bin, args, { windowsHide: true, timeout }, (err, out, errOut) => res({ code: err ? (err.code ?? 1) : 0, out: String(out || ''), err: String(errOut || '') }));
+  });
+}
+async function publicStatus() {
+  if (!tsBin()) return { installed: false };
+  const s = await ts(['status', '--json']);
+  let j = null; try { j = JSON.parse(s.out); } catch {}
+  if (!j) return { installed: true, running: false };
+  const dns = String(j.Self?.DNSName || '').replace(/\.$/, '');
+  const f = await ts(['funnel', 'status', '--json']);
+  let on = false; try { const fj = JSON.parse(f.out || '{}'); on = !!(fj.AllowFunnel && Object.values(fj.AllowFunnel).some(Boolean)); } catch {}
+  return { installed: true, running: j.BackendState === 'Running', state: j.BackendState, url: dns ? `https://${dns}` : null, on, hosting: !!serverInfo };
+}
+async function publicStart() {
+  if (!serverInfo) return { error: 'Parlotte doit être lancé en mode « Héberger » sur ce PC.' };
+  // Si Funnel n'est pas encore autorisé, tailscale affiche un lien et attend : on récupère le lien.
+  const r = await ts(['funnel', '--bg', `https+insecure://localhost:${serverInfo.httpsPort}`], 20000);
+  const text = r.out + r.err, link = text.match(/https:\/\/login\.tailscale\.com\/\S+/);
+  return { ...(await publicStatus()), enableUrl: link ? link[0] : null, detail: text.slice(0, 400) };
+}
+async function publicStop() { await ts(['funnel', 'reset']); return publicStatus(); }
+ipcMain.handle('app:public', () => publicStatus());
+ipcMain.handle('app:publicStart', () => publicStart());
+ipcMain.handle('app:publicStop', () => publicStop());
+ipcMain.on('app:openSafe', (e, url) => {
+  const u = String(url || '');
+  if (/^https:\/\/(login\.tailscale\.com|tailscale\.com|github\.com\/thomas-pns\/parlotte)(\/|$)/.test(u)) shell.openExternal(u);
+});
+
 // ---------------------------------------------------------------- Sauvegardes (faites par le serveur toutes les 6 h)
 const BACKUP_DIR = path.join(DATA_DIR, 'sauvegardes');
 function listBackups() {

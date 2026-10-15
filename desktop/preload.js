@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('parlotteDesktop', {
   setShowGame: on => ipcRenderer.send('app:showGame', !!on),
   onUpdate: cb => ipcRenderer.on('app:update', (e, u) => cb({ version: String(u?.version || '') })),
   installUpdate: () => ipcRenderer.send('app:installUpdate'),
+  // accès de partout (Tailscale)
+  publicStatus: () => ipcRenderer.invoke('app:public'),
+  publicStart: () => ipcRenderer.invoke('app:publicStart'),
+  publicStop: () => ipcRenderer.invoke('app:publicStop'),
+  openSafe: url => ipcRenderer.send('app:openSafe', String(url || '')),
   // sélecteur de partage d'écran
   onSources: cb => ipcRenderer.on('picker:sources', (e, list) => cb(list)),
   choose: id => ipcRenderer.send('picker:choose', id),
