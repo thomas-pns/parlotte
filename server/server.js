@@ -38,10 +38,11 @@ const ALL = Object.values(P).reduce((a, b) => a | b, 0);
 const DEFAULT_PERMS = P.VIEW | P.SEND | P.ATTACH | P.REACT | P.INVITE | P.CONNECT | P.SPEAK | P.VIDEO;
 
 // ---------------------------------------------------------------- Stockage
-const empty = () => ({ users: {}, sessions: {}, servers: {}, channels: {}, messages: [], friendships: [], uploads: {}, blocks: {} });
+const empty = () => ({ users: {}, sessions: {}, servers: {}, channels: {}, messages: [], friendships: [], uploads: {}, blocks: {}, activity: {} });
 let db;
 try { db = Object.assign(empty(), JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))); } catch { db = empty(); }
 let migrated = false;
+if (!db.activity) { db.activity = {}; migrated = true; }
 for (const s of Object.values(db.servers)) {
   if (!s.channels.some(c => db.channels[c]?.type === 'voice')) {
     migrated = true;
@@ -173,13 +174,42 @@ function bootstrap(uid) {
   const users = {}; userIds.forEach(u => db.users[u] && (users[u] = publicUser(db.users[u])));
   const lastByChannel = {};
   const visible = new Set([...servers.flatMap(s => [...s.channels, ...s.threads].map(c => c.id)), ...dms.map(c => c.id)]);
-  for (const m of db.messages) if (visible.has(m.channel_id)) lastByChannel[m.channel_id] = m.timestamp;
+  const dmIds = new Set(dms.map(c => c.id)), previews = {};
+  for (const m of db.messages) if (visible.has(m.channel_id)) {
+    lastByChannel[m.channel_id] = m.timestamp;
+    if (dmIds.has(m.channel_id)) previews[m.channel_id] = previewOf(m);
+  }
   return {
-    t: 'bootstrap', P, me: uid, users, servers, dms, lastByChannel, voice: voiceSnapshot(uid),
+    t: 'bootstrap', P, me: uid, users, servers, dms, lastByChannel, previews, voice: voiceSnapshot(uid),
     friends: friendsOf(uid), blocked: db.blocks[uid] || [],
     incoming: rel.filter(f => !f.accepted && f.to === uid).map(f => f.from),
     outgoing: rel.filter(f => !f.accepted && f.from === uid).map(f => f.to),
+    activity: (db.activity[uid] || []).slice(0, 60).map(publicActivity),
   };
+}
+
+// ---------------------------------------------------------------- Activité (invitations, mentions, j'aime)
+const publicActivity = a => (a.type === 'invite' ? { ...a, gone: !db.servers[a.serverId], serverName: db.servers[a.serverId]?.name || a.serverName,
+  members: db.servers[a.serverId]?.members.length || 0, joined: !!db.servers[a.serverId]?.members.includes(a.to) } : a);
+function pushActivity(uid, item) {
+  if (!db.users[uid] || db.users[uid].bot) return;
+  const list = (db.activity[uid] = db.activity[uid] || []);
+  const a = { id: id(), at: now(), seen: false, to: uid, ...item };
+  list.unshift(a); if (list.length > 100) list.length = 100;
+  save(); sendTo(uid, { t: 'activity', item: publicActivity(a) });
+}
+// Aperçu du dernier message d'une conversation (liste des Potes)
+const previewOf = m => ({ a: m.author_id, at: m.timestamp, x: excerpt(m.content || (m.attachments?.[0]?.voice ? '🎙️ Message vocal' : m.attachments?.length
+  ? (/^image\//.test(m.attachments[0].content_type) ? '📷 Photo' : /^video\//.test(m.attachments[0].content_type) ? '🎬 Vidéo' : '📎 Fichier') : m.poll ? '📊 Sondage' : ''), 90) });
+const excerpt = (text, n) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+// Ajoute quelqu'un à un serveur (code d'invitation ou invitation d'un ami).
+function addToServer(s, uid) {
+  if (s.bans.includes(uid)) throw new Error('Tu as été banni de ce serveur');
+  if (s.members.includes(uid)) return;
+  s.members.push(uid);
+  const first = db.channels[s.channels.find(c => db.channels[c].type === 'text')];
+  const m = systemMessage(first.id, `**${db.users[uid].name}** a rejoint le serveur 👋`);
+  save(); refresh(s.members); broadcast(audienceOf(first), { t: 'message', message: m });
 }
 
 // ---------------------------------------------------------------- Diffusion
@@ -221,6 +251,7 @@ function voiceSnapshot(uid) {
 
 // ---------------------------------------------------------------- Fils et emojis : utilitaires
 const threadsOf = s => Object.values(db.channels).filter(c => c.type === 'thread' && c.server_id === s.id);
+const serverOfChannel = ch => (ch.type === 'thread' ? db.channels[ch.parent_id]?.server_id : ch.server_id) || null;
 const publicEmoji = e => ({ id: e.id, name: e.name, url: `/uploads/${e.file}`, by: e.by });
 const publicSound = x => ({ id: x.id, name: x.name, emoji: x.emoji || '', url: `/uploads/${x.file}`, volume: x.volume ?? 1, by: x.by });
 // Sons intégrés : synthétisés par le client, rien à télécharger.
@@ -327,13 +358,7 @@ const handlers = {
   joinServer(ws, { code }) {
     const s = Object.values(db.servers).find(x => x.invite === clean(code, 20).toLowerCase());
     if (!s) throw new Error('Code d\'invitation invalide');
-    if (s.bans.includes(ws.uid)) throw new Error('Tu as été banni de ce serveur');
-    if (!s.members.includes(ws.uid)) {
-      s.members.push(ws.uid);
-      const first = db.channels[s.channels.find(c => db.channels[c].type === 'text')];
-      const m = systemMessage(first.id, `**${db.users[ws.uid].name}** a rejoint le serveur 👋`);
-      save(); refresh(s.members); broadcast(audienceOf(first), { t: 'message', message: m });
-    }
+    addToServer(s, ws.uid);
     return { t: 'opened', server: s.id, channel: s.channels[0] };
   },
   leaveServer(ws, { serverId }) {
@@ -386,13 +411,89 @@ const handlers = {
   },
   openDM(ws, { userId }) {
     if (!db.users[userId] || userId === ws.uid) throw new Error('Utilisateur introuvable');
-    let c = dmsOf(ws.uid).find(x => x.members.includes(userId));
+    let c = dmsOf(ws.uid).find(x => !x.group && x.members.includes(userId));
     if (!c && blocked(ws.uid, userId)) throw new Error('Impossible d\'écrire à cette personne');
     if (!c) {
       if (!friendsOf(ws.uid).includes(userId)) throw new Error('Ajoute cette personne en ami pour lui écrire');
       c = { id: id(), type: 'dm', members: [ws.uid, userId] }; db.channels[c.id] = c; save(); refresh([ws.uid, userId]);
     }
     return { t: 'opened', server: '@me', channel: c.id };
+  },
+
+  // --- Groupes privés (dans l'espace Potes)
+  createGroup(ws, { name, members }) {
+    const ids = [...new Set((Array.isArray(members) ? members : []).map(String))].filter(u => u !== ws.uid);
+    if (ids.length < 2) throw new Error('Choisis au moins 2 amis pour un groupe');
+    if (ids.length > 9) throw new Error('10 personnes maximum dans un groupe');
+    const friends = friendsOf(ws.uid);
+    if (ids.some(u => !friends.includes(u) || blocked(ws.uid, u))) throw new Error('Tu ne peux ajouter que tes amis');
+    const c = { id: id(), type: 'dm', group: true, name: clean(name, 40), owner: ws.uid, members: [ws.uid, ...ids], created: now() };
+    db.channels[c.id] = c;
+    systemMessage(c.id, `**${db.users[ws.uid].name}** a créé le groupe`);
+    save(); refresh(c.members);
+    return { t: 'opened', server: '@me', channel: c.id };
+  },
+  addToGroup(ws, { channelId, userIds }) {
+    const c = db.channels[channelId]; if (!c?.group || !c.members.includes(ws.uid)) throw new Error('Groupe introuvable');
+    const friends = friendsOf(ws.uid);
+    const ids = [...new Set((Array.isArray(userIds) ? userIds : []).map(String))].filter(u => !c.members.includes(u));
+    if (!ids.length) return;
+    if (ids.some(u => !friends.includes(u) || blocked(ws.uid, u))) throw new Error('Tu ne peux ajouter que tes amis');
+    if (c.members.length + ids.length > 10) throw new Error('10 personnes maximum dans un groupe');
+    c.members.push(...ids);
+    const m = systemMessage(c.id, `**${db.users[ws.uid].name}** a ajouté ${ids.map(u => '**' + db.users[u].name + '**').join(', ')}`);
+    save(); refresh(c.members); broadcast(c.members, { t: 'message', message: m });
+  },
+  renameGroup(ws, { channelId, name }) {
+    const c = db.channels[channelId]; if (!c?.group || !c.members.includes(ws.uid)) throw new Error('Groupe introuvable');
+    c.name = clean(name, 40);
+    const m = systemMessage(c.id, c.name ? `**${db.users[ws.uid].name}** a renommé le groupe en **${c.name}**` : `**${db.users[ws.uid].name}** a retiré le nom du groupe`);
+    save(); refresh(c.members); broadcast(c.members, { t: 'message', message: m });
+  },
+  leaveGroup(ws, { channelId }) {
+    const c = db.channels[channelId]; if (!c?.group || !c.members.includes(ws.uid)) throw new Error('Groupe introuvable');
+    if (ws.voice === c.id) leaveVoice(ws);
+    c.members = c.members.filter(u => u !== ws.uid);
+    if (c.owner === ws.uid) c.owner = c.members[0];
+    if (!c.members.length) { delete db.channels[c.id]; db.messages = db.messages.filter(m => m.channel_id !== c.id); save(); refresh([ws.uid]); return; }
+    const m = systemMessage(c.id, `**${db.users[ws.uid].name}** a quitté le groupe`);
+    save(); refresh([...c.members, ws.uid]); broadcast(c.members, { t: 'message', message: m });
+  },
+  // « Vu » dans les messages privés et les groupes
+  markRead(ws, { channelId, messageId }) {
+    const c = db.channels[channelId]; if (!c || c.type !== 'dm' || !c.members.includes(ws.uid)) return;
+    const m = db.messages.find(x => x.id === messageId && x.channel_id === channelId); if (!m) return;
+    c.reads = c.reads || {};
+    if ((c.reads[ws.uid] || '') >= m.timestamp) return;
+    c.reads[ws.uid] = m.timestamp; save();
+    broadcast(c.members, { t: 'read', channelId, userId: ws.uid, at: m.timestamp });
+  },
+
+  // --- Activité
+  inviteFriend(ws, { serverId, userId }) {
+    const s = db.servers[serverId]; needServer(ws.uid, s, P.INVITE, 'Tu n\'as pas le droit d\'inviter sur ce serveur');
+    if (!friendsOf(ws.uid).includes(userId)) throw new Error('Tu ne peux inviter que tes amis');
+    if (s.members.includes(userId)) throw new Error('Cette personne est déjà sur le serveur');
+    if (s.bans.includes(userId)) throw new Error('Cette personne est bannie de ce serveur');
+    const already = (db.activity[userId] || []).find(a => a.type === 'invite' && a.serverId === s.id && a.from === ws.uid && !a.done);
+    if (already) throw new Error('Invitation déjà envoyée');
+    pushActivity(userId, { type: 'invite', from: ws.uid, serverId: s.id, serverName: s.name });
+  },
+  acceptInvite(ws, { activityId }) {
+    const a = (db.activity[ws.uid] || []).find(x => x.id === activityId && x.type === 'invite');
+    if (!a) throw new Error('Invitation introuvable');
+    const s = db.servers[a.serverId]; if (!s) throw new Error('Ce serveur n\'existe plus');
+    addToServer(s, ws.uid); a.done = true; a.seen = true; save();
+    return { t: 'opened', server: s.id, channel: s.channels.find(c => db.channels[c].type === 'text') };
+  },
+  dismissActivity(ws, { activityId }) {
+    db.activity[ws.uid] = (db.activity[ws.uid] || []).filter(x => x.id !== activityId); save();
+    sendTo(ws.uid, { t: 'activityRemoved', id: activityId });
+  },
+  activitySeen(ws) {
+    let changed = false;
+    for (const a of db.activity[ws.uid] || []) if (!a.seen) { a.seen = true; changed = true; }
+    if (changed) { save(); sendTo(ws.uid, { t: 'activitySeen' }); }
   },
 
   // --- Messages
@@ -406,7 +507,7 @@ const handlers = {
     const ch = db.channels[channelId]; if (!canAccess(ws.uid, ch)) throw new Error('Salon inaccessible');
     if (ch.type === 'voice') throw new Error('On ne peut pas écrire dans un salon vocal');
     need(ws.uid, ch, P.SEND, 'Tu ne peux pas écrire dans ce salon');
-    if (ch.type === 'dm' && blocked(ch.members[0], ch.members[1])) throw new Error('Impossible d\'écrire à cette personne (blocage)');
+    if (ch.type === 'dm' && !ch.group && blocked(ch.members[0], ch.members[1])) throw new Error('Impossible d\'écrire à cette personne (blocage)');
     if (attachments?.length) need(ws.uid, ch, P.ATTACH, 'Tu ne peux pas envoyer de fichiers dans ce salon');
     content = clean(content, 2000);
     // Pièces jointes : uniquement des fichiers que cet utilisateur a lui-même envoyés, 10 max.
@@ -428,6 +529,12 @@ const handlers = {
     db.messages.push(m); save();
     broadcast(audience, { t: 'message', message: m });
     if (ch.type === 'thread') threadActivity(ch);
+    // Activité : mentions directes (@pseudo) dans les serveurs
+    if (ch.type !== 'dm' && content) {
+      const direct = new Set([...content.matchAll(/@([\p{L}\p{N}_.-]+)/gu)].map(x => x[1].toLowerCase()));
+      for (const u of m.mentions) if (u !== ws.uid && direct.has(db.users[u]?.name.toLowerCase()) && !blocked(u, ws.uid))
+        pushActivity(u, { type: 'mention', from: ws.uid, channelId, serverId: serverOfChannel(ch), messageId: m.id, text: excerpt(content, 140) });
+    }
   },
   edit(ws, { messageId, content }) {
     const m = db.messages.find(x => x.id === messageId); if (!m || m.author_id !== ws.uid || !canAccess(ws.uid, db.channels[m.channel_id])) throw new Error('Tu ne peux modifier que tes messages');
@@ -453,6 +560,10 @@ const handlers = {
     i === -1 ? who.push(ws.uid) : who.splice(i, 1);
     if (!who.length) delete m.reactions[emoji];
     save(); broadcast(audienceOf(ch), { t: 'messageUpdate', message: m });
+    if (i === -1 && m.author_id !== ws.uid && db.users[m.author_id] && !blocked(m.author_id, ws.uid)
+      && !(db.activity[m.author_id] || []).some(a => a.type === 'like' && a.messageId === m.id && a.from === ws.uid && a.emoji === emoji))
+      pushActivity(m.author_id, { type: 'like', from: ws.uid, emoji, channelId: ch.id, serverId: serverOfChannel(ch), messageId: m.id,
+        text: excerpt(m.content || (m.attachments?.[0]?.voice ? 'Message vocal' : m.attachments?.length ? 'Fichier' : ''), 80) });
   },
   pin(ws, { messageId }) {
     const m = db.messages.find(x => x.id === messageId); const ch = m && db.channels[m.channel_id];
@@ -514,7 +625,9 @@ const handlers = {
     room.set(ws.uid, { ws, muted: false, deafened: false, since: now() });
     ws.voice = channelId;
     voiceChanged(channelId);
-    if (ch.type === 'dm') {
+    if (ch.type === 'dm' && ch.group) {
+      if (!peers.length) ch.members.filter(u => u !== ws.uid).forEach(u => sendTo(u, { t: 'ring', channelId, from: ws.uid }));
+    } else if (ch.type === 'dm') {
       const other = ch.members.find(m => m !== ws.uid);
       if (blocked(ws.uid, other)) { leaveVoice(ws); throw new Error('Impossible d\'appeler cette personne'); }
       if (!room.has(other)) sendTo(other, { t: 'ring', channelId, from: ws.uid });
@@ -911,7 +1024,7 @@ class Socket {
 }
 
 // ---------------------------------------------------------------- HTTP
-const TYPES = { '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const TYPES = { '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
 function json(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); }
 
 // POST /upload : corps = octets du fichier ; en-têtes Authorization: Bearer <jeton>, X-Filename, Content-Type.

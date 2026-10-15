@@ -109,7 +109,7 @@ function setupCertificates() {
 // ---------------------------------------------------------------- Fenêtre
 function createWindow() {
   win = new BrowserWindow({
-    width: 1280, height: 820, minWidth: 380, minHeight: 500, show: false, backgroundColor: '#313338',
+    width: 1280, height: 820, minWidth: 380, minHeight: 500, show: false, backgroundColor: '#14121A',
     title: 'Parlotte', icon: path.join(__dirname, 'build', 'icon.png'), autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, spellcheck: true },
   });
@@ -190,7 +190,7 @@ function pickSource(sources) {
   return new Promise(resolve => {
     const picker = new BrowserWindow({
       parent: win, modal: true, width: 760, height: 560, resizable: false, minimizable: false, maximizable: false,
-      title: 'Partager mon écran', backgroundColor: '#313338', autoHideMenuBar: true, show: false,
+      title: 'Partager mon écran', backgroundColor: '#14121A', autoHideMenuBar: true, show: false,
       webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
     });
     let done = false;

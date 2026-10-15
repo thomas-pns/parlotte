@@ -16,9 +16,10 @@ function openStatusMenu() {
   const hasCustom = pr.customStatus || pr.statusEmoji;
   menu.innerHTML = `${hasCustom ? `<div class="sm-custom"><span>${statusLine(pr)}</span>${pr.statusExpires ? `<small>jusqu'à ${esc(untilText(pr.statusExpires))}</small>` : ''}<button data-cs-clear title="Effacer le statut">✕</button></div>` : ''}
     <button class="sm-item" data-cs-edit>😀 ${hasCustom ? 'Modifier mon statut perso' : 'Définir un statut perso'}</button><hr>
-    ${STATUS_ITEMS.map(([k, l, d]) => `<button class="sm-item ${cur === k ? 'on' : ''}" data-presence="${k}"><span class="st-dot" style="background:${dot[k === 'invisible' ? 'offline' : k]}"></span><span><b>${l}</b>${d ? `<small>${d}</small>` : ''}</span></button>`).join('')}`;
+    ${STATUS_ITEMS.map(([k, l, d]) => `<button class="sm-item ${cur === k ? 'on' : ''}" data-presence="${k}"><span class="st-dot" style="background:${dot[k === 'invisible' ? 'offline' : k]}"></span><span><b>${l}</b>${d ? `<small>${d}</small>` : ''}</span></button>`).join('')}
+    <hr><button class="sm-item" id="sm-profile">Modifier mon profil</button><button class="sm-item" id="sm-settings">Paramètres</button>`;
   const r = $('#me').getBoundingClientRect();
-  menu.style.left = r.left + 8 + 'px'; menu.style.bottom = (innerHeight - r.top + 6) + 'px';
+  menu.style.left = Math.max(8, Math.min(r.left + 8, innerWidth - 268)) + 'px'; menu.style.bottom = (innerHeight - r.top + 6) + 'px';
   menu.hidden = false;
 }
 $('#me').addEventListener('click', e => { if (e.target.closest('#open-status')) { e.stopPropagation(); $('#status-menu').hidden ? openStatusMenu() : ($('#status-menu').hidden = true); } });
@@ -27,6 +28,8 @@ $('#status-menu').addEventListener('click', e => {
   if (p) { $('#status-menu').hidden = true; act('setProfile', { presence: p.dataset.presence }); }
   if (e.target.closest('[data-cs-edit]')) { $('#status-menu').hidden = true; openCustomStatus(); }
   if (e.target.closest('[data-cs-clear]')) { $('#status-menu').hidden = true; act('setProfile', { customStatus: '', statusEmoji: '' }); }
+  if (e.target.closest('#sm-profile')) { $('#status-menu').hidden = true; openProfile(); }
+  if (e.target.closest('#sm-settings')) { $('#status-menu').hidden = true; openSettings(); }
 });
 document.addEventListener('click', e => { if (!e.target.closest('#status-menu,#open-status')) $('#status-menu').hidden = true; });
 

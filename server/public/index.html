@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="theme-color" content="#1e1f22">
+<meta name="theme-color" content="#14121a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Parlotte">
@@ -31,30 +31,34 @@
 </section>
 
 <div id="app" hidden>
+  <nav id="rail" aria-label="Navigation"><div id="rail-top"></div><span class="rail-grow"></span><footer id="me"></footer></nav>
   <nav id="servers" aria-label="Serveurs"></nav>
   <aside id="sidebar">
     <header id="side-head"></header>
     <button id="qs-open" class="qs-open" title="Aller à un salon, un ami… (Ctrl+K)">Aller à… <kbd>Ctrl K</kbd></button>
     <div id="side-list"></div>
-    <div id="voice-panel" hidden>
-      <div class="vp-info"><b id="vp-status">Connecté au vocal</b><small id="vp-where"></small></div>
-      <button id="vp-leave" title="Quitter le vocal">📞</button>
-    </div>
-    <footer id="me"></footer>
   </aside>
+  <div id="voice-panel" hidden>
+    <div class="vp-info"><b id="vp-status">Connecté au vocal</b><small id="vp-where"></small></div>
+    <button id="vp-leave" title="Quitter le vocal" aria-label="Quitter le vocal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 15c5-5 13-5 18 0l-2.5 2.5-3-2v-3a12 12 0 00-7 0v3l-3 2z"></path></svg></button>
+  </div>
   <main id="chat">
     <header id="chat-head">
-      <button id="menu" title="Salons" aria-label="Afficher les salons">☰</button>
+      <button id="menu" title="Retour" aria-label="Retour"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></button>
+      <span id="chan-av"></span>
       <span id="chan-title"></span><span id="chan-topic"></span>
       <div class="search-box">
         <input id="q" placeholder="Rechercher" autocomplete="off" aria-label="Rechercher">
         <ul id="sugg"></ul>
       </div>
-      <button id="threads-btn" title="Fils de discussion" hidden>🧵</button>
+      <button id="threads-btn" title="Fils de discussion" aria-label="Fils de discussion" hidden><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6h14M5 12h10M5 18h6"/></svg></button>
       <button id="pins" title="Messages épinglés">📌</button>
       <button id="call" title="Lancer un appel vocal" hidden>📞</button>
+      <button id="vcall" title="Lancer un appel vidéo" hidden>🎥</button>
       <button id="toggle-members" title="Membres">👥</button>
     </header>
+    <nav id="chan-chips" aria-label="Salons" hidden></nav>
+    <div id="thread-bar" hidden></div>
     <div id="stage-bar" hidden><b></b><button id="stage-toggle">Réduire</button></div>
     <div id="stage" hidden></div>
     <div id="view"></div>
@@ -69,9 +73,9 @@
       <div class="input-row">
         <button type="button" id="attach" title="Joindre des fichiers (ou glisse-les ici, ou colle une image)">＋</button>
         <textarea id="input" rows="1" placeholder="Envoyer un message"></textarea>
-        <button type="button" id="emoji-btn" title="Emojis">😀</button>
-        <button type="button" id="poll-btn" title="Créer un sondage">📊</button>
-        <button type="button" id="rec-btn" title="Enregistrer un message vocal">🎙️</button>
+        <button type="button" id="emoji-btn" title="Emojis" aria-label="Emojis"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 007 0M9 9.5h.01M15 9.5h.01"/></svg></button>
+        <button type="button" id="poll-btn" title="Créer un sondage" aria-label="Créer un sondage"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6"/></svg></button>
+        <button type="button" id="rec-btn" title="Enregistrer un message vocal" aria-label="Enregistrer un message vocal"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
         <input type="file" id="file" multiple hidden>
       </div>
     </form>
@@ -116,6 +120,14 @@
   <label>Effacer après <select id="cs-exp"></select></label>
   <menu><button value="cancel">Annuler</button><button value="ok" class="primary">Enregistrer</button></menu>
 </form></dialog>
+<dialog id="group-dlg"><form method="dialog">
+  <h3>Nouveau groupe</h3>
+  <label class="fld">Nom du groupe (facultatif)<input id="group-name" maxlength="40" placeholder="Les gars du lycée"></label>
+  <p class="small">Choisis au moins 2 amis (10 personnes max).</p>
+  <div id="group-friends" class="pick-list"></div>
+  <menu><button value="cancel">Annuler</button><button value="ok" class="primary" id="group-ok">Créer le groupe</button></menu>
+</form></dialog>
+<dialog id="invite-dlg"><div id="invite-body"></div></dialog>
 <dialog id="srv-dlg" class="big"><div class="srv-wrap"><nav id="srv-tabs"></nav><div id="srv-body"></div><button id="srv-close" title="Fermer">✕</button></div></dialog>
 <dialog id="chan-dlg" class="big"><div id="chan-body"></div></dialog>
 <dialog id="poll-dlg"><form method="dialog" id="poll-form">
@@ -137,5 +149,6 @@
 <script src="app.js"></script>
 <script src="voix.js"></script>
 <script src="presence.js"></script>
+<script src="espaces.js"></script>
 </body>
 </html>

@@ -32,7 +32,8 @@ const allChannels = () => [...st.servers.flatMap(s => [...s.channels, ...(s.thre
 const chanById = id => allChannels().find(c => c.id === id);
 const channel = () => chanById(st.view.channel);
 const dmOther = c => user(c.members.find(m => m !== st.me) || st.me);
-const chanLabel = c => (c.type === 'dm' ? '@' + dmOther(c).name : c.type === 'thread' ? '🧵 ' + c.name : '#' + c.name);
+const groupName = c => c.name || c.members.filter(m => m !== st.me).map(m => user(m).name).slice(0, 4).join(', ') || 'Groupe';
+const chanLabel = c => (c.type === 'dm' ? (c.group ? groupName(c) : '@' + dmOther(c).name) : c.type === 'thread' ? '🧵 ' + c.name : '#' + c.name);
 
 // ---------------------------------------------------------------- Réseau
 let ws, refN = 0, retry = 0;
@@ -77,9 +78,10 @@ function handle(m) {
     case 'bootstrap': {
       P = m.P || P;
       st.blocked = m.blocked || [];
-      Object.assign(st, { users: m.users, servers: m.servers, dms: m.dms, friends: m.friends, incoming: m.incoming, outgoing: m.outgoing, lastByChannel: m.lastByChannel, voice: m.voice || {} });
+      Object.assign(st, { users: m.users, servers: m.servers, dms: m.dms, friends: m.friends, incoming: m.incoming, outgoing: m.outgoing, lastByChannel: m.lastByChannel, voice: m.voice || {},
+        previews: m.previews || {}, activity: m.activity || [] });
       for (const [c, ts] of Object.entries(m.lastByChannel)) if (!st.unread[c] && ts > (st.read[c] || '') && c !== st.view.channel) st.unread[c] = '•';
-      if (st.view.server !== '@me' && !server()) Object.assign(st.view, { server: '@me', channel: null });
+      if (!isSpecial(st.view.server) && !server()) Object.assign(st.view, { server: '@me', channel: null });
       if (st.view.channel && !channel()) st.view.channel = st.view.server === '@me' ? null : firstText(server());
       render(); if (st.view.channel && !st.msgs[st.view.channel]) loadHistory(st.view.channel);
       if ($('#srv-dlg').open) renderServerSettings();
@@ -124,6 +126,10 @@ function handle(m) {
     case 'ring': onRing(m.channelId, m.from); break;
     case 'callDeclined': if (vc.channel === m.channelId) { toast(`${user(m.by).name} a refusé l'appel`); leaveVoice(); } break;
     case 'voiceKicked': leaveVoice(true); toast(m.reason); break;
+    case 'read': onRead(m); break;
+    case 'activity': onActivity(m.item); break;
+    case 'activitySeen': (st.activity || []).forEach(a => (a.seen = true)); renderRail(); break;
+    case 'activityRemoved': st.activity = (st.activity || []).filter(a => a.id !== m.id); renderRail(); if (st.view.server === '@activity') renderMain(); break;
     case 'sound': onSound(m); break;
   }
   if (p) p.resolve(m);
@@ -133,9 +139,12 @@ let onNewMessage = function (msg) {
   const list = st.msgs[msg.channel_id];
   if (list && !list.some(x => x.id === msg.id)) list.push(msg);
   st.lastByChannel[msg.channel_id] = msg.timestamp;
+  const isDm = st.dms.some(c => c.id === msg.channel_id);
+  if (isDm) st.previews[msg.channel_id] = previewOf(msg);
   clearTyping(msg.channel_id, msg.author_id);
   const here = msg.channel_id === st.view.channel && document.visibilityState === 'visible';
   if (msg.channel_id === st.view.channel) { renderMain('keep'); if (here) markRead(msg.channel_id); }
+  if (isDm && st.view.server === '@me') renderSide(); // aperçu du dernier message dans la liste
   if (!here && msg.author_id !== st.me) {
     st.unread[msg.channel_id] = (typeof st.unread[msg.channel_id] === 'number' ? st.unread[msg.channel_id] : 0) + 1;
     renderRail(); renderSide(); updateTitle();
@@ -146,6 +155,7 @@ let onNewMessage = function (msg) {
 function markRead(cid) {
   st.read[cid] = st.lastByChannel[cid] || new Date().toISOString(); delete st.unread[cid];
   store.set('parlotte-read-' + st.me, st.read); updateTitle();
+  sendReadReceipt(cid); // « Vu » (espaces.js)
 }
 function updateTitle() {
   const n = Object.entries(st.unread).filter(([c]) => chanById(c)?.type === 'dm').reduce((a, [, v]) => a + (typeof v === 'number' ? v : 1), 0);
@@ -245,32 +255,22 @@ function format(text) {
 }
 
 // ---------------------------------------------------------------- Rendu
-function render() { renderRail(); renderSide(); renderMain('bottom'); renderMembers(); }
+function render() { layoutSpace(); renderRail(); renderSide(); renderMain('bottom'); renderMembers(); }
 const isFriendsView = () => st.view.server === '@me' && !st.view.channel;
+const isSpecial = id => id === '@me' || id === '@activity' || id === '@servers';
 const unreadIn = chans => chans.reduce((a, c) => a + (st.unread[c.id] ? (typeof st.unread[c.id] === 'number' ? st.unread[c.id] : 1) : 0), 0);
 
-function renderRail() {
-  const dmUnread = unreadIn(st.dms) + st.incoming.length;
-  $('#servers').innerHTML =
-    `<button class="srv home ${st.view.server === '@me' ? 'on' : ''}" data-srv="@me" title="Messages privés et amis">💬${dmUnread ? `<span class="dot">${dmUnread}</span>` : ''}</button><div class="sep"></div>` +
-    st.servers.map(s => { const u = s.id !== st.view.server && unreadIn(s.channels);
-      return `<button class="srv ${s.id === st.view.server ? 'on' : ''}" data-srv="${s.id}" title="${esc(s.name)}">${esc(s.name.split(/\s+/).map(w => w[0]).join('').slice(0, 3))}${u ? '<span class="dot">•</span>' : ''}</button>`; }).join('') +
-    '<button class="srv add" id="add-server" title="Créer un serveur">+</button><button class="srv add" id="join-server" title="Rejoindre avec un code">🧭</button>';
-}
+function renderRail() { renderNav(); } // barre Potes / Serveurs / Activité + cartes des serveurs (espaces.js)
 
 function renderSide() {
   const head = $('#side-head'), list = $('#side-list');
-  if (st.view.server === '@me') {
-    head.innerHTML = '<span>Messages privés</span>';
-    list.innerHTML = `<button class="dm ${isFriendsView() ? 'on' : ''}" data-friends>👥 Amis${st.incoming.length ? `<span class="badge">${st.incoming.length}</span>` : ''}</button>
-      <div class="cat">Messages privés</div>` +
-      ([...st.dms].sort((a, b) => (st.lastByChannel[b.id] || '').localeCompare(st.lastByChannel[a.id] || '')).map(c => { const o = dmOther(c), n = st.unread[c.id];
-        return `<button class="dm ${c.id === st.view.channel ? 'on' : ''} ${n ? 'unread' : ''}" data-chan-id="${c.id}">${avatar(o, true)}<span>${esc(o.name)}</span>${(st.voice[c.id] || []).length ? ' <span title="Appel en cours">🔊</span>' : ''}${n ? `<span class="badge">${n}</span>` : ''}</button>`; }).join('')
-       || '<p class="small" style="padding:0 8px">Ajoute des amis pour discuter en privé.</p>');
-  } else {
+  renderMe();
+  if (st.view.server === '@activity' || st.view.server === '@servers') { head.innerHTML = ''; list.innerHTML = ''; return; }
+  if (st.view.server === '@me') return renderPotesList(head, list);
+  {
     const s = server(), owner = s.owner === st.me, manageCh = sp(s, P.MANAGE_CHANNELS);
     const admin = sp(s, P.MANAGE_SERVER) || sp(s, P.MANAGE_ROLES) || sp(s, P.KICK) || sp(s, P.BAN);
-    head.innerHTML = `<span class="srv-name">${esc(s.name)}</span><span>${s.invite ? '<button id="invite" title="Inviter">Inviter</button>' : ''}${admin ? ' <button id="srv-settings" title="Paramètres du serveur">⚙</button>' : ''}${owner ? '' : ' <button id="leave" title="Quitter le serveur">Quitter</button>'}</span>`;
+    head.innerHTML = `<div class="srv-banner" style="--srv:${esc(serverColor(s))}"><span class="srv-name">${esc(s.name)}</span><span class="srv-acts">${s.invite ? '<button id="invite" title="Inviter des amis">Inviter</button>' : ''}${admin ? ' <button id="srv-settings" title="Paramètres du serveur" aria-label="Paramètres du serveur">⚙</button>' : ''}${owner ? '' : ' <button id="leave" title="Quitter le serveur">Quitter</button>'}</span></div>`;
     const gear = c => (c.perms & P.MANAGE_CHANNELS) ? `<span class="gear" data-chan-settings="${c.id}" title="Paramètres du salon">⚙</span>` : '';
     list.innerHTML = `<div class="cat">Salons textuels ${manageCh ? '<button id="add-channel" title="Créer un salon">+</button>' : ''}</div>` +
       s.channels.filter(c => c.type !== 'voice').map(c => { const on = c.id === st.view.channel, n = st.unread[c.id];
@@ -282,19 +282,31 @@ function renderSide() {
       s.channels.filter(c => c.type === 'voice').map(voiceChannelHTML).join('') +
       (owner ? '<p class="small" style="padding:12px 8px"><button class="danger-btn" id="delete-server">Supprimer le serveur</button></p>' : '');
   }
+}
+function renderMe() {
   const me = user(st.me);
   const pr = st.profile || {}, chosen = pr.presence || 'online';
   const mine = { ...me, status: chosen === 'invisible' ? 'offline' : chosen === 'online' && me.status === 'idle' ? 'idle' : chosen };
   const line = pr.customStatus || pr.statusEmoji ? statusLine(pr) : me.activity ? statusLine({ activity: me.activity }) : esc(STATUS[chosen === 'online' ? mine.status : chosen]);
-  $('#me').innerHTML = `<button class="me-av" id="open-status" title="Changer de statut">${avatar(mine, true)}</button><div class="meinfo" id="open-profile" title="Modifier mon profil"><b>${esc(me.name)}</b><small>${line}</small></div><button id="open-settings" title="Paramètres">⚙</button>`;
+  const box = $('#me'); if (!box) return;
+  box.innerHTML = `<button class="me-av" id="open-status" title="Changer de statut" aria-label="Mon statut">${avatar(mine, true)}</button><div class="meinfo" id="open-profile" title="Modifier mon profil"><b>${esc(me.name)}</b><small>${line}</small></div><button id="open-settings" title="Paramètres" aria-label="Paramètres">${ICON.gear}</button>`;
 }
 
 function renderMain(scroll) {
   const box = $('#view'), composer = $('#composer');
   const prevH = box.scrollHeight, prevTop = box.scrollTop, atBottom = prevH - prevTop - box.clientHeight < 80;
+  $('#chan-av').innerHTML = ''; $('#vcall').hidden = true; $('#thread-bar').hidden = true;
+  if (st.view.server === '@activity' || st.view.server === '@servers') {
+    $('#call').hidden = true; $('#pins').hidden = true; $('#threads-btn').hidden = true; $('#chan-chips').hidden = true;
+    composer.hidden = true; $('#members').hidden = true; $('#chan-topic').textContent = '';
+    if (st.view.server === '@activity') { $('#chan-title').textContent = 'Activité'; box.innerHTML = activityHTML(); }
+    else { $('#chan-title').textContent = 'Serveurs'; box.innerHTML = noServerHTML(); }
+    return;
+  }
+  renderChips();
   if (isFriendsView()) {
     $('#call').hidden = true; $('#pins').hidden = true; $('#threads-btn').hidden = true;
-    $('#chan-title').textContent = '👥 Amis'; $('#chan-topic').textContent = '';
+    $('#chan-title').textContent = 'Tes potes'; $('#chan-topic').textContent = '';
     composer.hidden = true; $('#members').hidden = true; box.innerHTML = friendsHTML();
     return;
   }
@@ -304,17 +316,22 @@ function renderMain(scroll) {
   if (c.type === 'thread') {
     const parent = chanById(c.parent_id), mod = c.owner === st.me || cp(c, P.MANAGE_MESSAGES);
     $('#chan-title').innerHTML = `<button class="crumb" data-goto-chan="${c.parent_id}">#${esc(parent?.name || '')}</button> › 🧵 ${esc(c.name)}`;
-    $('#chan-topic').innerHTML = `${c.archived ? '<span class="arch">archivé</span> ' : ''}${mod ? `<button class="link" data-thread-act="rename">Renommer</button> · <button class="link" data-thread-act="${c.archived ? 'unarchive' : 'archive'}">${c.archived ? 'Désarchiver' : 'Archiver'}</button> · <button class="link" data-thread-act="delete">Supprimer</button>` : ''}`;
+    $('#chan-topic').innerHTML = c.archived ? '<span class="arch">archivé</span>' : '';
+    $('#thread-bar').innerHTML = mod ? `<span>🧵 Fil de discussion</span><button class="link" data-thread-act="rename">Renommer</button><button class="link" data-thread-act="${c.archived ? 'unarchive' : 'archive'}">${c.archived ? 'Désarchiver' : 'Archiver'}</button><button class="link" data-thread-act="delete">Supprimer</button>` : '';
   }
+  $('#thread-bar').hidden = !(c.type === 'thread' && $('#thread-bar').innerHTML);
   $('#threads-btn').hidden = c.type !== 'text';
-  $('#call').hidden = c.type !== 'dm'; $('#pins').hidden = c.type === 'voice';
+  $('#call').hidden = c.type !== 'dm'; $('#vcall').hidden = c.type !== 'dm'; $('#pins').hidden = c.type === 'voice';
+  if (c.type === 'dm') chatHeadDM(c);
   const canSend = cp(c, P.SEND);
   $('#input').disabled = !canSend;
-  $('#input').placeholder = canSend ? `Envoyer un message à ${chanLabel(c)}` : 'Tu n\'as pas la permission d\'écrire dans ce salon';
+  $('#input').placeholder = !canSend ? 'Tu n\'as pas la permission d\'écrire dans ce salon' : c.type === 'dm' ? 'Message…' : `Écrire dans ${chanLabel(c)}`;
   $('#attach').hidden = !cp(c, P.ATTACH);
   $('#poll-btn').hidden = !canSend; $('#emoji-btn').hidden = !canSend; $('#rec-btn').hidden = !cp(c, P.ATTACH);
   const list = st.msgs[c.id];
   if (!list) { box.innerHTML = '<div class="empty-state">Chargement…</div>'; return; }
+  if (c.type === 'dm') { box.classList.add('bubbles'); box.innerHTML = bubblesHTML(c, list); afterRender(box, scroll, prevH, prevTop, atBottom); return; }
+  box.classList.remove('bubbles');
   const inCall = c.type === 'dm' ? (st.voice[c.id] || []) : [];
   let html = inCall.length ? `<div class="callbar">🔊 Appel en cours ${inCall.map(m => `<span data-speaker="${esc(m.id)}" class="${speaking.has(m.id) ? 'speaking' : ''}">${avatar(user(m.id))}</span>`).join('')}${vc.channel === c.id ? '' : '<button class="primary green" data-joincall>Rejoindre</button>'}</div>` : '';
   html += st.more[c.id] ? '<button class="more" id="load-more">Charger les messages plus anciens</button>'
@@ -350,6 +367,9 @@ function renderMain(scroll) {
     prev = m;
   }
   box.innerHTML = html;
+  afterRender(box, scroll, prevH, prevTop, atBottom);
+}
+function afterRender(box, scroll, prevH, prevTop, atBottom) {
   const nd = box.querySelector('.newdiv');
   if (scroll === 'bottom' && nd && st.divider?.fresh !== false) { nd.scrollIntoView({ block: 'center' }); st.divider.fresh = false; }
   else if (scroll === 'bottom' || (scroll === 'keep' && atBottom)) box.scrollTop = box.scrollHeight;
@@ -384,7 +404,8 @@ function friendsHTML() {
 function renderMembers() {
   const box = $('#members');
   let ids;
-  if (isFriendsView()) return;
+  if (isFriendsView() || isSpecial(st.view.server) && st.view.server !== '@me') return;
+  if (st.view.server === '@me' && channel()?.type === 'dm') { box.innerHTML = dmPanelHTML(channel()); return; }
   if (st.view.server === '@me') { const c = channel(); ids = c ? c.members : []; }
   else ids = server()?.members || [];
   const us = ids.map(user), s = st.view.server === '@me' ? null : server();
@@ -409,6 +430,8 @@ function openChannel(serverId, channelId) {
   if (channelId && channelId !== st.view.channel) st.divider = { channel: channelId, at: st.read[channelId] || '' };
   if (st.divider && !st.divider.at) st.divider = null; // première visite : pas de séparateur
   Object.assign(st.view, { server: serverId, channel: channelId });
+  if (serverId === '@me' && channelId) st.lastDm = channelId;
+  if (!isSpecial(serverId)) { st.lastServer = serverId; if (channelId) (st.lastChanOf = st.lastChanOf || {})[serverId] = channelId; }
   setReply(null); $('#results').hidden = true; document.body.classList.remove('show-side');
   if (channelId) { markRead(channelId); if (!st.msgs[channelId]) loadHistory(channelId); }
   render();
@@ -501,12 +524,6 @@ function toast(text, bad) {
 // ---------------------------------------------------------------- Événements
 $('#servers').addEventListener('click', e => {
   const b = e.target.closest('[data-srv]');
-  if (b && matchMedia('(max-width:640px)').matches) {
-    const s = st.servers.find(x => x.id === b.dataset.srv);
-    Object.assign(st.view, { server: b.dataset.srv, channel: s ? firstText(s) : null });
-    if (st.view.channel && !st.msgs[st.view.channel]) loadHistory(st.view.channel);
-    render(); return; // sur mobile : on reste sur la liste des salons
-  }
   if (b) {
     if (b.dataset.srv === '@me') openChannel('@me', null);
     else { const s = st.servers.find(x => x.id === b.dataset.srv); openChannel(s.id, firstText(s)); }
@@ -523,13 +540,9 @@ $('#sidebar').addEventListener('click', e => {
   const s = server();
   if (e.target.closest('#add-channel')) ask('Créer un salon textuel', '', 'Créer', name => act('createChannel', { serverId: s.id, name }));
   if (e.target.closest('#add-voice')) ask('Créer un salon vocal', '', 'Créer', name => act('createChannel', { serverId: s.id, name, type: 'voice' }));
-  if (e.target.closest('#invite')) {
-    const link = s.invite;
-    ask('Inviter des amis', `Donne ce code à tes amis : ils cliquent sur 🧭 et le collent.`, 'Fermer', () => {}, link);
-    try { navigator.clipboard.writeText(link).then(() => toast('Code copié !')).catch(() => {}); } catch {}
-  }
-  if (e.target.closest('#leave') && confirm(`Quitter ${s.name} ?`)) act('leaveServer', { serverId: s.id }).then(() => openChannel('@me', null));
-  if (e.target.closest('#delete-server') && confirm(`Supprimer définitivement ${s.name} et tous ses messages ?`)) act('deleteServer', { serverId: s.id }).then(() => openChannel('@me', null));
+  if (e.target.closest('#invite')) openInvite(s);
+  if (e.target.closest('#leave') && confirm(`Quitter ${s.name} ?`)) act('leaveServer', { serverId: s.id }).then(() => openChannel('@servers', null));
+  if (e.target.closest('#delete-server') && confirm(`Supprimer définitivement ${s.name} et tous ses messages ?`)) act('deleteServer', { serverId: s.id }).then(() => openChannel('@servers', null));
   if (e.target.closest('#logout')) doLogout();
 });
 $('#view').addEventListener('click', e => {
@@ -576,7 +589,7 @@ input.addEventListener('keydown', e => {
 });
 $('#cancel-reply').onclick = () => setReply(null);
 $('#composer').onsubmit = e => e.preventDefault();
-$('#menu').onclick = () => document.body.classList.add('show-side');
+$('#menu').onclick = () => goBack(); // téléphone : retour à la liste (espaces.js)
 $('#toggle-members').onclick = () => $('#members').classList.toggle('hide');
 $('#close-results').onclick = () => { $('#results').hidden = true; };
 $('#res-list').addEventListener('click', e => {
@@ -758,11 +771,12 @@ function voiceChannelHTML(c) {
 }
 function where(cid) {
   const c = chanById(cid); if (!c) return '';
-  if (c.type === 'dm') return 'Appel avec ' + dmOther(c).name;
+  if (c.type === 'dm') return c.group ? 'Appel · ' + groupName(c) : 'Appel avec ' + dmOther(c).name;
   const s = st.servers.find(x => x.id === c.server_id); return `${c.name} / ${s ? s.name : ''}`;
 }
 function renderVoicePanel() {
   const p = $('#voice-panel'), cid = vc.channel || vc.joining;
+  document.body.classList.toggle('in-voice', !!cid);
   p.hidden = !cid; if (!cid) return;
   const states = [...vc.peers.values()].map(x => x.pc.connectionState);
   const connecting = vc.joining || states.some(s => s === 'new' || s === 'connecting');
@@ -771,11 +785,11 @@ function renderVoicePanel() {
   $('#vp-where').textContent = where(cid);
   p.querySelector('.vp-btns')?.remove();
   p.insertAdjacentHTML('beforeend', `<div class="vp-btns">
-    <button id="vp-mute" class="${vc.muted ? 'off' : ''}" title="${vc.muted ? 'Réactiver le micro' : 'Couper le micro'}">${vc.muted ? '🤐' : '🎤'}</button>
-    <button id="vp-deaf" class="${vc.deafened ? 'off' : ''}" title="${vc.deafened ? 'Réactiver le son' : 'Couper le son'}">${vc.deafened ? '🔇' : '🎧'}</button>
-    ${cp(chanById(cid), P.VIDEO) ? `<button id="vp-cam" class="${vc.camera ? 'on' : ''}" title="${vc.camera ? 'Couper la caméra' : 'Activer la caméra'}">📷</button>` : ''}
-    ${canShareScreen && cp(chanById(cid), P.VIDEO) ? `<button id="vp-screen" class="${vc.screen ? 'on' : ''}" title="${vc.screen ? 'Arrêter le partage' : 'Partager mon écran'}">🖥️</button>` : ''}
-    ${vc.channel && cp(chanById(cid), P.SPEAK) ? '<button id="vp-sb" title="Soundboard">🎵</button>' : ''}</div>`);
+    <button id="vp-mute" class="${vc.muted ? 'off' : ''}" title="${vc.muted ? 'Réactiver le micro' : 'Couper le micro'}">${vc.muted ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M9 9v2a3 3 0 005.1 2.1M15 10V6a3 3 0 00-5.7-1.3M5 11a7 7 0 0011.3 5.5M19 11a7 7 0 01-.7 3M12 18v3"/></svg>' : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg>'}</button>
+    <button id="vp-deaf" class="${vc.deafened ? 'off' : ''}" title="${vc.deafened ? 'Réactiver le son' : 'Couper le son'}">${vc.deafened ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M4 15v-3a8 8 0 0112.9-6.3M20 12v3"/><rect x="3" y="14" width="5" height="7" rx="2"/><path d="M16 16v3a2 2 0 002 2h1"/></svg>' : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15v-3a8 8 0 0116 0v3"/><rect x="3" y="14" width="5" height="7" rx="2"/><rect x="16" y="14" width="5" height="7" rx="2"/></svg>'}</button>
+    ${cp(chanById(cid), P.VIDEO) ? `<button id="vp-cam" class="${vc.camera ? 'on' : ''}" title="${vc.camera ? 'Couper la caméra' : 'Activer la caméra'}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="M16 10l5-3v10l-5-3z"/></svg></button>` : ''}
+    ${canShareScreen && cp(chanById(cid), P.VIDEO) ? `<button id="vp-screen" class="${vc.screen ? 'on' : ''}" title="${vc.screen ? 'Arrêter le partage' : 'Partager mon écran'}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>` : ''}
+    ${vc.channel && cp(chanById(cid), P.SPEAK) ? '<button id="vp-sb" title="Soundboard" aria-label="Soundboard"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></button>' : ''}</div>`);
   const call = $('#call'); call.classList.toggle('active', vc.channel && vc.channel === st.view.channel);
   call.title = call.classList.contains('active') ? 'Raccrocher' : 'Lancer un appel vocal';
 }
@@ -956,7 +970,7 @@ function onVoiceState(cid, members) {
   }
   if (ringing === cid && !members.length) hideRing();
   if (cid === vc.channel) renderStage();
-  renderSide(); renderVoicePanel();
+  renderRail(); renderSide(); renderVoicePanel();
   if (cid === st.view.channel) renderMain('keep');
 }
 function applyMute() {
@@ -1561,9 +1575,10 @@ function qsSources() {
     out.push({ label: '🏠 ' + s.name, sub: 'Serveur', go: () => openChannel(s.id, firstText(s)) });
   }
   const withDm = new Set();
-  for (const c of st.dms) { const o = dmOther(c); withDm.add(o.id); out.push({ label: '@' + o.name, sub: 'Message privé', go: () => openChannel('@me', c.id), unread: !!st.unread[c.id] }); }
+  for (const c of st.dms) { if (!c.group) withDm.add(dmOther(c).id); out.push({ label: chanLabel(c), sub: c.group ? 'Groupe' : 'Message privé', go: () => openChannel('@me', c.id), unread: !!st.unread[c.id] }); }
   for (const f of st.friends) if (!withDm.has(f)) out.push({ label: '@' + user(f).name, sub: 'Ami · démarrer une conversation', go: () => act('openDM', { userId: f }) });
-  out.push({ label: '👥 Amis', sub: 'Liste d\'amis', go: () => openChannel('@me', null) });
+  out.push({ label: '👥 Tes potes', sub: 'Amis et demandes', go: () => openChannel('@me', null) });
+  out.push({ label: '🔔 Activité', sub: 'Invitations, mentions, j\'aime', go: () => openChannel('@activity', null) });
   return out;
 }
 function fuzzy(q, text) { // score simple : lettres dans l'ordre, bonus si consécutives / au début
