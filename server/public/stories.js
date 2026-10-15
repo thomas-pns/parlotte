@@ -95,7 +95,7 @@ function storyReplyHTML(m, mine) {
 // ---------------------------------------------------------------- Calques plein écran (créés une fois)
 document.body.insertAdjacentHTML('beforeend', `
 <div id="scam" class="sfull" hidden role="dialog" aria-label="Nouvelle story">
-  <div class="sstage"><video id="scam-v" playsinline muted autoplay></video><p id="scam-msg" hidden></p><div id="scam-rec" hidden><i></i><span>0:00</span></div>
+  <div class="sstage"><video id="scam-v" playsinline muted autoplay></video><p id="scam-msg" hidden></p><div id="scam-rec" hidden><i></i><span>0:00</span><em>Touche pour arrêter</em></div>
   <div class="s-top"><button class="s-ico" id="scam-close" aria-label="Fermer">${SI.close}</button><b>Nouvelle story</b><button class="s-ico" id="scam-flip" aria-label="Changer de caméra">${SI.flip}</button></div>
   <div class="s-bottom cam">
     <label class="s-ico gal" title="Choisir une photo ou une vidéo">${SI.gallery}<input type="file" id="scam-file" accept="image/*,video/*" hidden><span class="sr">Galerie</span></label>
@@ -156,15 +156,29 @@ $('#scam-file').onchange = async e => {
   toast('Choisis une photo ou une vidéo', true);
 };
 const shutter = $('#scam-shutter');
+// Sur téléphone, un appui long déclenche d'habitude le menu, la loupe ou la sélection de texte, et le
+// navigateur « annule » le doigt (pointercancel) : la vidéo ne s'arrêtait jamais. On bloque tout ça,
+// et si le doigt est quand même perdu, la vidéo continue et un simple appui l'arrête.
+const recording = () => cam.rec?.state === 'recording';
 shutter.addEventListener('pointerdown', e => {
   if (shutter.disabled || !cam.stream) return;
-  e.preventDefault(); shutter.setPointerCapture?.(e.pointerId);
+  e.preventDefault(); try { shutter.setPointerCapture(e.pointerId); } catch {}
+  if (recording()) { cam.stopOnUp = true; return; } // appui pendant l'enregistrement = stop
+  cam.stopOnUp = false; clearTimeout(cam.holdTimer);
   cam.holdTimer = setTimeout(startRecording, 350);
 });
-shutter.addEventListener('pointerup', () => {
-  if (cam.holdTimer) { clearTimeout(cam.holdTimer); cam.holdTimer = null; if (!cam.rec || cam.rec.state !== 'recording') return takePhoto(); }
-  if (cam.rec?.state === 'recording') cam.rec.stop();
+shutter.addEventListener('pointerup', e => {
+  e.preventDefault();
+  if (cam.holdTimer) { clearTimeout(cam.holdTimer); cam.holdTimer = null; if (!recording()) return takePhoto(); }
+  if (recording() && (cam.stopOnUp || !cam.lost)) cam.rec.stop();
 });
+shutter.addEventListener('pointercancel', () => {
+  if (cam.holdTimer) { clearTimeout(cam.holdTimer); cam.holdTimer = null; startRecording(); } // l'appui long a été « volé » : on filme quand même
+  if (recording()) { cam.lost = true; $('#scam-rec').classList.add('tapstop'); }
+});
+shutter.addEventListener('contextmenu', e => e.preventDefault());
+shutter.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+shutter.addEventListener('touchend', e => e.preventDefault(), { passive: false });
 shutter.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); takePhoto(); } });
 async function takePhoto() {
   const v = $('#scam-v'); if (!v.videoWidth) return;
@@ -192,7 +206,8 @@ function startRecording() {
     if (file.size > 10 * 1024 * 1024) { toast('Vidéo trop lourde (10 Mo max)', true); return openCamera(); }
     openEditor(file, 'video');
   };
-  cam.rec.start(250); cam.recStart = Date.now();
+  cam.lost = false; $('#scam-rec').classList.remove('tapstop');
+  cam.rec.start(250); cam.recStart = Date.now(); navigator.vibrate?.(15);
   shutter.classList.add('rec'); $('#scam-rec').hidden = false;
   cam.recTimer = setInterval(() => {
     const s = (Date.now() - cam.recStart) / 1000;
@@ -221,7 +236,8 @@ function openEditor(file, kind) {
   Object.assign(ed, { file, kind, stickers: [], sel: -1 });
   if (ed.url) URL.revokeObjectURL(ed.url);
   ed.url = URL.createObjectURL(file);
-  $('#sedit-media').innerHTML = kind === 'video' ? `<video src="${ed.url}" autoplay loop playsinline></video>` : `<img src="${ed.url}" alt="">`;
+  $('#sedit-media').innerHTML = kind === 'video' ? `<video src="${ed.url}" autoplay loop playsinline></video>` : `<img class="s-fill" src="${ed.url}" alt="" aria-hidden="true"><img class="s-main" src="${ed.url}" alt="">`;
+  replay($('#sedit-stage'), 'opening');
   $('#sedit').hidden = false; document.body.classList.add('story-open');
   renderStickers($('#sedit-layer'), ed.stickers, { edit: true });
 }
@@ -270,6 +286,7 @@ $('#sedit-input').addEventListener('submit', e => {
     ed.stickers.push({ type: 'poll', question: $('#spl-q').value.trim(), answers: answers.map((text, i) => ({ id: String(i + 1), text })), x: 0.5, y: 0.6, rot: -2 });
   }
   $('#sedit-input').hidden = true; ed.sel = -1; renderStickers($('#sedit-layer'), ed.stickers, { edit: true });
+  $('#sedit-layer').lastElementChild?.classList.add('new');
 });
 // Glisser-déposer des éléments (souris et doigt)
 (() => {
@@ -314,8 +331,17 @@ function openStoryViewer(uid, storyId) {
   viewer.queue = storyAuthors();
   viewer.uid = uid; viewer.list = list;
   const first = storyId ? list.findIndex(x => x.id === storyId) : list.findIndex(x => !x.seen);
-  $('#sview').hidden = false; document.body.classList.add('story-open');
+  const sv = $('#sview'); clearTimeout(viewer.closing); sv.classList.remove('closing');
+  if (sv.hidden) replay(sv, 'opening'); else replay($('#sview-stage'), 'swap-next');
+  sv.hidden = false; document.body.classList.add('story-open');
   showStory(first >= 0 ? first : 0);
+}
+// Rejoue une animation CSS (même si elle vient de tourner)
+function replay(el, cls) { el.classList.remove('opening', 'swap-next', 'swap-prev'); void el.offsetWidth; el.classList.add(cls); }
+function closeViewerSoft() {
+  const sv = $('#sview'); if (sv.hidden || sv.classList.contains('closing')) return;
+  cancelAnimationFrame(viewer.raf); sv.classList.add('closing');
+  viewer.closing = setTimeout(() => { sv.classList.remove('closing'); closeViewer(); }, 200);
 }
 function closeViewer() {
   clearTimeout(viewer.timer); cancelAnimationFrame(viewer.raf);
@@ -328,10 +354,14 @@ function showStory(i) {
   clearTimeout(viewer.timer);
   const x = viewer.list[i]; if (!x) return closeViewer();
   viewer.i = i; viewer.elapsed = 0; viewer.paused = false; viewer.start = performance.now();
-  $('#sview-media').innerHTML = x.kind === 'video' ? `<video src="${esc(x.url)}" autoplay playsinline></video>` : `<img src="${esc(x.url)}" alt="">`;
+  $('#sview-media').innerHTML = x.kind === 'video' ? `<video src="${esc(x.url)}" autoplay playsinline></video>`
+    : `<img class="s-fill" src="${esc(x.url)}" alt="" aria-hidden="true"><img class="s-main" src="${esc(x.url)}" alt="">`;
+  $('#sview').style.setProperty('--sbg', x.kind === 'video' ? 'none' : `url("${x.url.replace(/"/g, '')}")`);
+  $('#sview').classList.remove('paused');
   const v = $('#sview-media video');
   if (v) { v.onended = () => nextStory(); v.onerror = () => nextStory(); v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
   renderViewerChrome();
+  const lay = $('#sview-layer'); lay.classList.add('pop'); clearTimeout(viewer.popT); viewer.popT = setTimeout(() => lay.classList.remove('pop'), 900);
   if (!x.seen && x.author !== st.me) request('viewStory', { storyId: x.id }).catch(() => {});
   tick();
 }
@@ -352,19 +382,19 @@ function tick() {
   viewer.raf = requestAnimationFrame(loop);
 }
 function setPaused(on) {
-  viewer.paused = on; const v = $('#sview-media video');
+  viewer.paused = on; $('#sview').classList.toggle('paused', on); const v = $('#sview-media video');
   if (v) on ? v.pause() : v.play().catch(() => {});
 }
 function nextStory() {
   if (viewer.i < viewer.list.length - 1) return showStory(viewer.i + 1);
   const q = viewer.queue, at = q.indexOf(viewer.uid), nxt = q.slice(at + 1).find(u => unseenStory(u)) || q[at + 1];
   if (nxt && nxt !== viewer.uid) return openStoryViewer(nxt);
-  closeViewer();
+  closeViewerSoft();
 }
 function prevStory() {
   if (viewer.i > 0) return showStory(viewer.i - 1);
   const q = viewer.queue, at = q.indexOf(viewer.uid);
-  if (at > 0) { const u = q[at - 1]; viewer.uid = u; viewer.list = storiesOf(u); return showStory(viewer.list.length - 1); }
+  if (at > 0) { const u = q[at - 1]; viewer.uid = u; viewer.list = storiesOf(u); replay($('#sview-stage'), 'swap-prev'); return showStory(viewer.list.length - 1); }
   showStory(0);
 }
 function renderViewerChrome() {
@@ -382,10 +412,10 @@ function renderViewerChrome() {
 }
 $('#sview').addEventListener('click', e => {
   const x = viewer.list[viewer.i]; if (!x) return;
-  if (e.target.closest('[data-close-story]') || e.target === $('#sview')) return closeViewer();
+  if (e.target.closest('[data-close-story]') || e.target === $('#sview')) return closeViewerSoft();
   if (e.target.closest('#sview-prev')) return prevStory();
   if (e.target.closest('#sview-next')) return nextStory();
-  if (e.target.closest('[data-like-story]')) return request('likeStory', { storyId: x.id }).catch(err => toast(err.message, true));
+  if (e.target.closest('[data-like-story]')) { if (!x.liked) heartBurst(); return request('likeStory', { storyId: x.id }).catch(err => toast(err.message, true)); }
   const vt = e.target.closest('[data-vote]');
   if (vt) { const [k, a] = vt.dataset.vote.split(':'); return request('voteStory', { storyId: x.id, sticker: Number(k), answer: a }).catch(err => toast(err.message, true)); }
   if (e.target.closest('[data-del-story]')) {
@@ -418,7 +448,7 @@ $('#sview').addEventListener('focusout', e => { if (e.target.id === 'sview-in') 
 $('#sview').addEventListener('submit', async e => {
   e.preventDefault();
   const x = viewer.list[viewer.i], inp = $('#sview-in'), text = inp?.value.trim(); if (!x || !text) return;
-  try { await request('replyStory', { storyId: x.id, text }); inp.value = ''; inp.blur(); toast(`Réponse envoyée à ${user(x.author).name}`); }
+  try { await request('replyStory', { storyId: x.id, text }); inp.value = ''; inp.blur(); fly(); toast(`Réponse envoyée à ${user(x.author).name}`); }
   catch (err) { toast(err.message, true); }
 });
 document.addEventListener('keydown', e => {
@@ -427,7 +457,19 @@ document.addEventListener('keydown', e => {
     else if (e.key === 'Escape' && !$('#sedit').hidden && $('#sedit-input').hidden) closeEditor();
     return;
   }
-  if (e.key === 'Escape') { e.preventDefault(); closeViewer(); }
+  if (e.key === 'Escape') { e.preventDefault(); closeViewerSoft(); }
   if (e.key === 'ArrowRight') nextStory();
   if (e.key === 'ArrowLeft') prevStory();
 });
+
+// ---------------------------------------------------------------- Petites animations
+function heartBurst() {
+  const st0 = $('#sview-stage'), h = document.createElement('div'); h.className = 's-burst';
+  h.innerHTML = SI.heartFill + Array.from({ length: 8 }, (_, k) => `<b style="--a:${k * 45}deg"></b>`).join('');
+  st0.appendChild(h); setTimeout(() => h.remove(), 900); navigator.vibrate?.(10);
+}
+function fly() {
+  const st0 = $('#sview-stage'), f = document.createElement('div'); f.className = 's-fly'; f.innerHTML = SI.send;
+  st0.appendChild(f); setTimeout(() => f.remove(), 900);
+}
+$('#sview').addEventListener('animationend', e => { if (e.target.id === 'sview') e.target.classList.remove('opening'); });

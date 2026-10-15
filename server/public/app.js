@@ -272,7 +272,7 @@ function renderSide() {
   {
     const s = server(), owner = s.owner === st.me, manageCh = sp(s, P.MANAGE_CHANNELS);
     const admin = sp(s, P.MANAGE_SERVER) || sp(s, P.MANAGE_ROLES) || sp(s, P.KICK) || sp(s, P.BAN);
-    head.innerHTML = `<div class="srv-banner" style="--srv:${esc(serverColor(s))}"><span class="srv-name">${esc(s.name)}</span><span class="srv-acts">${s.invite ? '<button id="invite" title="Inviter des amis">Inviter</button>' : ''}${admin ? ' <button id="srv-settings" title="Paramètres du serveur" aria-label="Paramètres du serveur">⚙</button>' : ''}${owner ? '' : ' <button id="leave" title="Quitter le serveur">Quitter</button>'}</span></div>`;
+    head.innerHTML = `<div class="srv-banner ${s.banner ? 'has-img' : ''}" style="--srv:${esc(serverColor(s))}${s.banner ? `;--srv-img:url('${esc(s.banner)}')` : ''}"><span class="srv-name">${esc(s.name)}</span><span class="srv-acts">${s.invite ? '<button id="invite" title="Inviter des amis">Inviter</button>' : ''}${admin ? ' <button id="srv-settings" title="Paramètres du serveur" aria-label="Paramètres du serveur">⚙</button>' : ''}${owner ? '' : ' <button id="leave" title="Quitter le serveur">Quitter</button>'}</span></div>`;
     const gear = c => (c.perms & P.MANAGE_CHANNELS) ? `<span class="gear" data-chan-settings="${c.id}" title="Paramètres du salon">⚙</span>` : '';
     list.innerHTML = `<div class="cat">Salons textuels ${manageCh ? '<button id="add-channel" title="Créer un salon">+</button>' : ''}</div>` +
       s.channels.filter(c => c.type !== 'voice').map(c => { const on = c.id === st.view.channel, n = st.unread[c.id];
@@ -1133,7 +1133,7 @@ function renderServerSettings() {
   } else if (srvTab === 'emojis') {
     const manage = sp(s, P.MANAGE_EMOJIS);
     body.innerHTML = `<h3>Emojis — ${s.emojis.length}/50</h3><p class="small">Utilise-les dans les messages avec <code>:nom:</code>, dans le sélecteur 😀 ou en réaction.</p>
-      ${manage ? `<div class="emo-add"><input type="file" id="emo-file" accept="image/png,image/jpeg,image/gif,image/webp"><input id="emo-name" placeholder="nom (ex : gg)" maxlength="32"><button class="primary" id="emo-add">Ajouter</button></div><p class="small">Image carrée conseillée, 512 Ko max. Les GIF animés marchent aussi.</p>` : '<p class="small">Il faut la permission « Gérer les emojis » pour en ajouter.</p>'}
+      ${manage ? `<div class="emo-add">${filePickHTML('emo-file', 'image/png,image/jpeg,image/gif,image/webp', 'Choisir une image', 'carrée, 512 Ko max')}<input id="emo-name" placeholder="nom (ex : gg)" maxlength="32"><button class="primary" id="emo-add">Ajouter</button></div><p class="small">Image carrée conseillée, 512 Ko max. Les GIF animés marchent aussi.</p>` : '<p class="small">Il faut la permission « Gérer les emojis » pour en ajouter.</p>'}
       <div class="emo-grid">${s.emojis.map(e => `<div class="emo"><img src="${esc(e.url)}" alt=""><b>:${esc(e.name)}:</b><small>par ${esc(user(e.by).name)}</small>${manage ? `<button class="danger-btn" data-delemoji="${e.id}">Supprimer</button>` : ''}</div>`).join('')}</div>`;
   } else if (srvTab === 'sounds') {
     body.innerHTML = soundsTabHTML(s);

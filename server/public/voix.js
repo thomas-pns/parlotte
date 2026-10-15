@@ -246,7 +246,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#sb').hid
 function soundsTabHTML(s) {
   const manage = sp(s, P.MANAGE_EMOJIS), list = s.sounds || [];
   return `<h3>Sons — ${list.length}/24</h3><p class="small">Ils apparaissent dans la soundboard 🎵 du vocal de ce serveur, en plus des sons intégrés.</p>
-    ${manage ? `<div class="snd-add"><input type="file" id="snd-file" accept="audio/*"><input id="snd-emoji" placeholder="😀" maxlength="8" class="emo-in">
+    ${manage ? `<div class="snd-add">${filePickHTML('snd-file', 'audio/*', 'Choisir un son', '5 s et 1 Mo max')}<input id="snd-emoji" placeholder="😀" maxlength="8" class="emo-in">
       <input id="snd-name" placeholder="nom (ex : GG)" maxlength="24"><label class="small">Volume <input type="range" id="snd-vol" min="5" max="100" value="100"></label>
       <button class="primary" id="snd-add">Ajouter</button></div><p class="small">5 secondes et 1 Mo maximum (mp3, ogg, wav…).</p>`
       : '<p class="small">Il faut la permission « Gérer les emojis et les sons » pour en ajouter.</p>'}

@@ -39,8 +39,15 @@ function goBack() {
   else if (space() === 'servers') openChannel('@servers', null);
 }
 const PALETTE = ['#8E6CFF', '#3FB27F', '#4FA3D1', '#F5C04A', '#E05A8A', '#FF8A5B', '#5B8CFF', '#C77DFF'];
-function serverColor(s) { let h = 0; for (const ch of s.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; }
-const lightColor = c => ['#F5C04A', '#6FE3D2'].includes(c);
+function serverColor(s) { if (s.color) return s.color; let h = 0; for (const ch of s.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; }
+const lightColor = c => { const m = /^#?([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16);
+  return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 170; };
+// Tuile d'un serveur : son icône si elle existe, sinon ses initiales sur sa couleur
+function srvTileHTML(s, cls = '') {
+  const col = serverColor(s);
+  return s.icon ? `<span class="srv-tile img ${cls}" style="background-image:url('${esc(s.icon)}')" aria-hidden="true"></span>`
+    : `<span class="srv-tile ${cls}" style="background:${col};color:${lightColor(col) ? '#14121A' : '#fff'}">${initials(s.name)}</span>`;
+}
 const initials = name => esc(name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase());
 function ago(at) {
   const d = (Date.now() - new Date(at)) / 1000;
@@ -108,7 +115,7 @@ function renderServerCards() {
     const online = s.members.filter(m => user(m).status !== 'offline').length;
     const sub = live ? `<i class="live-dot"></i>${live} en vocal` : unread ? `${unread} nouveau${unread > 1 ? 'x' : ''}` : `${online} en ligne · ${s.members.length} membre${s.members.length > 1 ? 's' : ''}`;
     return `<button class="srv-card ${s.id === st.view.server ? 'on' : ''}" data-srv="${s.id}" aria-label="${esc(s.name)}">
-      <span class="srv-tile" style="background:${color};color:${lightColor(color) ? '#14121A' : '#fff'}">${initials(s.name)}</span>
+      ${srvTileHTML(s)}
       <span class="srv-txt"><b>${esc(s.name)}</b><small class="${live ? 'lv' : ''}">${sub}</small></span>
       ${unread && s.id !== st.view.server ? `<span class="srv-badge">${unread > 99 ? '99+' : unread}</span>` : ''}</button>`;
   }).join('');
@@ -348,7 +355,7 @@ function dmPanelHTML(c) {
     <div class="dp-acts"><button class="ghost-btn" data-joincall>${ICON.phone} Appeler</button><button class="ghost-btn" id="dp-video">${ICON.video} Vidéo</button></div>
     ${photos}
     ${common.length ? `<h4>Serveurs en commun</h4>${common.map(s => { const live = serverLive(s), col = serverColor(s);
-      return `<button class="common-srv" data-srv-open="${s.id}"><span class="srv-tile sm" style="background:${col};color:${lightColor(col) ? '#14121A' : '#fff'}">${initials(s.name)}</span><span>${esc(s.name)}</span>${live ? `<small class="lv">${live} en vocal</small>` : ''}</button>`; }).join('')}` : ''}
+      return `<button class="common-srv" data-srv-open="${s.id}">${srvTileHTML(s, 'sm')}<span>${esc(s.name)}</span>${live ? `<small class="lv">${live} en vocal</small>` : ''}</button>`; }).join('')}` : ''}
   </div>`;
 }
 $('#members').addEventListener('click', e => {

@@ -159,6 +159,7 @@ function bootstrap(uid) {
   const servers = serversOf(uid).map(s => {
     const my = serverPerms(s, uid);
     return { id: s.id, name: s.name, owner: s.owner, members: s.members, created: s.created,
+      color: s.color || null, icon: fileUrl(s.icon), banner: fileUrl(s.banner), description: s.description || '',
       roles: s.roles, memberRoles: s.memberRoles, myPerms: my, myRank: Math.min(rankOf(s, uid), 1e9) /* Infinity ne passe pas en JSON */,
       invite: my & P.INVITE ? s.invite : null, bans: my & P.BAN ? s.bans : [],
       channels: s.channels.map(cid => db.channels[cid]).filter(c => c && canAccess(uid, c)).map(c => ({ ...c, perms: channelPerms(c, uid) })),
@@ -699,10 +700,26 @@ const handlers = {
 
 
   // --- Administration du serveur : rôles, membres, salons
-  updateServer(ws, { serverId, name }) {
+  updateServer(ws, { serverId, name, color, icon, banner, description }) {
     const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_SERVER, 'Il faut la permission « Gérer le serveur »');
-    name = clean(name, 40); if (!name) throw new Error('Nom de serveur vide');
-    s.name = name; save(); refresh(s.members);
+    if (name !== undefined) { name = clean(name, 40); if (!name) throw new Error('Nom de serveur vide'); s.name = name; }
+    if (description !== undefined) s.description = clean(description, 120);
+    if (color !== undefined) {
+      if (color !== null && !/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Couleur invalide');
+      s.color = color || null;
+    }
+    // Icône et bannière : une image envoyée par cette personne (ou null pour retirer)
+    const image = (fid, what) => {
+      if (fid === null) return null;
+      if (fid === s[what]) return fid;
+      const f = db.uploads[fid];
+      if (!f || f.owner !== ws.uid || !/^image\/(png|jpeg|gif|webp)$/.test(f.content_type)) throw new Error('Choisis une image (png, jpg, gif, webp)');
+      if (f.size > 8 * 1024 * 1024) throw new Error('Image trop lourde (8 Mo max)');
+      return f.id;
+    };
+    if (icon !== undefined) s.icon = image(icon, 'icon');
+    if (banner !== undefined) s.banner = image(banner, 'banner');
+    save(); refresh(s.members);
   },
   createRole(ws, { serverId }) {
     const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_ROLES, 'Il faut la permission « Gérer les rôles »');
