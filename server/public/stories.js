@@ -13,6 +13,12 @@ const SI = {
   send: svg('<path d="M21 3L3 10.5l7 3 3 7z"/><path d="M10 13.5L21 3"/>', 22),
   heart: svg('<path d="M12 21s-7-4.4-9.3-9A5.2 5.2 0 0112 6.6 5.2 5.2 0 0121.3 12C19 16.6 12 21 12 21z"/>', 26),
   heartFill: svg('<path d="M12 21s-7-4.4-9.3-9A5.2 5.2 0 0112 6.6 5.2 5.2 0 0121.3 12C19 16.6 12 21 12 21z" fill="currentColor"/>', 26),
+  muted: svg('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/>', 22),
+  sound: svg('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 8.5a5 5 0 010 7M19.5 6a8.5 8.5 0 010 12"/>', 22),
+  memories: svg('<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><path d="M17.25 13.5v7.5M13.5 17.25H21"/>', 24),
+  download: svg('<path d="M12 4v11M7 10l5 5 5-5M4 19h16"/>', 24),
+  star: svg('<path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.9l-5.3 2.7 1-5.8-4.2-4.1 5.9-.9z"/>', 22),
+  play: svg('<path d="M8 5l11 7-11 7z" fill="currentColor"/>', 22),
   chevL: svg('<path d="M15 5l-7 7 7 7"/>', 28), chevR: svg('<path d="M9 5l7 7-7 7"/>', 28),
 };
 const IMG_MS = 6000, MAX_VIDEO_S = 15;
@@ -98,7 +104,8 @@ document.body.insertAdjacentHTML('beforeend', `
   <div class="sstage"><video id="scam-v" playsinline muted autoplay></video><p id="scam-msg" hidden></p><div id="scam-rec" hidden><i></i><span>0:00</span><em>Touche pour arrêter</em></div>
   <div class="s-top"><button class="s-ico" id="scam-close" aria-label="Fermer">${SI.close}</button><b>Nouvelle story</b><button class="s-ico" id="scam-flip" aria-label="Changer de caméra">${SI.flip}</button></div>
   <div class="s-bottom cam">
-    <label class="s-ico gal" title="Choisir une photo ou une vidéo">${SI.gallery}<input type="file" id="scam-file" accept="image/*,video/*" hidden><span class="sr">Galerie</span></label>
+    <div class="cam-side"><label class="s-ico gal" title="Choisir une photo ou une vidéo du téléphone">${SI.gallery}<input type="file" id="scam-file" accept="image/*,video/*" hidden><span class="sr">Galerie</span></label>
+    <button class="s-ico" id="scam-mem" title="Mes souvenirs" aria-label="Mes souvenirs">${SI.memories}</button></div>
     <button id="scam-shutter" aria-label="Appuie pour une photo, maintiens pour filmer"><i></i></button>
     <span class="s-hint">Appuie : photo<br>Maintiens : vidéo</span>
   </div></div>
@@ -107,8 +114,16 @@ document.body.insertAdjacentHTML('beforeend', `
   <div class="sstage" id="sedit-stage"><div id="sedit-media"></div><div class="stk-layer" id="sedit-layer"></div>
   <div class="s-top"><button class="s-ico" id="sedit-back" aria-label="Recommencer">${SI.close}</button><span class="grow"></span>
     <button class="s-ico" id="sedit-text" aria-label="Ajouter du texte">${SI.text}</button><button class="s-ico" id="sedit-poll" aria-label="Ajouter un sondage">${SI.poll}</button></div>
-  <div class="s-bottom"><span class="s-hint">Glisse les éléments pour les placer · touche-les pour les retirer</span><button class="primary s-share" id="sedit-share">Partager à tes potes</button></div></div>
+  <div class="s-bottom sedit-bar">
+    <button class="s-act" id="sedit-save"><i>${SI.memories}</i><span>Souvenirs</span></button>
+    <button class="s-act" id="sedit-dl"><i>${SI.download}</i><span>Enregistrer</span></button>
+    <button class="s-act" id="sedit-send"><i>${SI.send}</i><span>Envoyer</span></button>
+    <button class="primary s-share" id="sedit-share"><span>Ta story</span>${SI.chevR}</button></div></div>
   <div id="sedit-input" class="s-modal" hidden></div>
+</div>
+<div id="smem" class="sfull sheet-wrap" hidden role="dialog" aria-label="Mes souvenirs">
+  <div class="msheet"><div class="msheet-head"><b>Souvenirs</b><span class="grow"></span><button class="s-ico" id="smem-close" aria-label="Fermer">${SI.close}</button></div>
+  <div id="smem-grid" class="mgrid"></div></div>
 </div>
 <div id="sview" class="sfull" hidden role="dialog" aria-label="Story">
   <button class="s-nav prev" id="sview-prev" aria-label="Story précédente">${SI.chevL}</button>
@@ -140,6 +155,7 @@ async function startCamera() {
 function camMsg(text) { const m = $('#scam-msg'); m.textContent = text; m.hidden = false; $('#scam-shutter').disabled = true; }
 function stopCamera() {
   if (cam.rec?.state === 'recording') { cam.rec.onstop = null; cam.rec.stop(); }
+  cam.drawing = false; cancelAnimationFrame(cam.raf);
   clearInterval(cam.recTimer); $('#scam-rec').hidden = true; $('#scam-shutter').classList.remove('rec');
   cam.stream?.getTracks().forEach(t => t.stop()); cam.stream = null; $('#scam-v').srcObject = null;
 }
@@ -150,7 +166,7 @@ $('#scam-file').onchange = async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   if (/^image\//.test(f.type)) return openEditor(await shrinkImage(f), 'image');
   if (/^video\//.test(f.type)) {
-    if (f.size > 10 * 1024 * 1024) return toast('Vidéo trop lourde (10 Mo max)', true);
+    if (f.size > 25 * 1024 * 1024) return toast('Vidéo trop lourde (25 Mo max)', true);
     return openEditor(f, 'video');
   }
   toast('Choisis une photo ou une vidéo', true);
@@ -180,12 +196,21 @@ shutter.addEventListener('contextmenu', e => e.preventDefault());
 shutter.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
 shutter.addEventListener('touchend', e => e.preventDefault(), { passive: false });
 shutter.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); takePhoto(); } });
+// Ce qui est enregistré = exactement ce que tu vois à l'écran : on recadre l'image de la caméra au format
+// de l'écran (toujours en portrait), y compris pour la vidéo. Avant, un iPhone tenu droit pouvait donner
+// une vidéo couchée.
+function outSize(width) {
+  const r = $('#scam .sstage').getBoundingClientRect(), a = Math.min(9 / 16, Math.max(9 / 21, (r.width || 9) / (r.height || 16)));
+  return [width, Math.round(width / a / 2) * 2];
+}
+function drawCover(g, v, W, H, mirror) {
+  const s = Math.max(W / v.videoWidth, H / v.videoHeight), dw = v.videoWidth * s, dh = v.videoHeight * s;
+  g.save(); if (mirror) { g.translate(W, 0); g.scale(-1, 1); } g.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh); g.restore();
+}
 async function takePhoto() {
   const v = $('#scam-v'); if (!v.videoWidth) return;
-  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-  const g = c.getContext('2d');
-  if (cam.facing === 'user') { g.translate(c.width, 0); g.scale(-1, 1); } // comme dans un miroir, ce que tu voyais
-  g.drawImage(v, 0, 0);
+  const [W, H] = outSize(1080), c = document.createElement('canvas'); c.width = W; c.height = H;
+  drawCover(c.getContext('2d'), v, W, H, cam.facing === 'user'); // comme dans un miroir, ce que tu voyais
   shutter.classList.add('flash'); setTimeout(() => shutter.classList.remove('flash'), 200);
   const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
   stopCamera(); $('#scam').hidden = true;
@@ -194,16 +219,28 @@ async function takePhoto() {
 function startRecording() {
   cam.holdTimer = null;
   if (!window.MediaRecorder) return toast('Ton navigateur ne sait pas filmer : prends une photo', true);
-  const type = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-  try { cam.rec = new MediaRecorder(cam.stream, type ? { mimeType: type, videoBitsPerSecond: 2_500_000 } : {}); } catch { return toast('Enregistrement vidéo impossible', true); }
+  // MP4 (H.264) d'abord : c'est ce que tous les téléphones savent lire.
+  const type = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,opus', 'video/mp4;codecs=avc1', 'video/mp4',
+    'video/webm;codecs=vp8,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported?.(t)) || '';
+  const v = $('#scam-v'); let stream = cam.stream;
+  const c = document.createElement('canvas');
+  if (c.captureStream && v.videoWidth) {
+    const [W, H] = outSize(720); c.width = W; c.height = H; const g = c.getContext('2d');
+    cam.drawing = true;
+    const draw = () => { if (!cam.drawing) return; drawCover(g, v, W, H, cam.facing === 'user'); cam.raf = requestAnimationFrame(draw); };
+    draw();
+    stream = c.captureStream(30); cam.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+  }
+  try { cam.rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 2_500_000 } : {}); }
+  catch { try { cam.rec = new MediaRecorder(stream); } catch { cam.drawing = false; return toast('Enregistrement vidéo impossible', true); } }
   cam.chunks = [];
   cam.rec.ondataavailable = e => e.data.size && cam.chunks.push(e.data);
   cam.rec.onstop = () => {
-    clearInterval(cam.recTimer); $('#scam-rec').hidden = true; shutter.classList.remove('rec');
+    cam.drawing = false; cancelAnimationFrame(cam.raf); clearInterval(cam.recTimer); $('#scam-rec').hidden = true; shutter.classList.remove('rec');
     const base = (cam.rec.mimeType || type || 'video/webm').split(';')[0];
     const file = new File(cam.chunks, base === 'video/mp4' ? 'story.mp4' : 'story.webm', { type: base });
     stopCamera(); $('#scam').hidden = true;
-    if (file.size > 10 * 1024 * 1024) { toast('Vidéo trop lourde (10 Mo max)', true); return openCamera(); }
+    if (file.size > 25 * 1024 * 1024) { toast('Vidéo trop lourde (25 Mo max)', true); return openCamera(); }
     openEditor(file, 'video');
   };
   cam.lost = false; $('#scam-rec').classList.remove('tapstop');
@@ -230,14 +267,22 @@ async function shrinkImage(f) {
 }
 
 // ---------------------------------------------------------------- Création : texte, sondage, placement
-const ed = { file: null, kind: null, url: null, stickers: [], sel: -1 };
+const ed = { file: null, kind: null, url: null, stickers: [], sel: -1, up: null, memoryId: null, remote: null };
+// Le fichier n'est envoyé qu'une fois, même si on l'enregistre ET qu'on le partage.
+async function edUpload() { if (!ed.up) ed.up = await upload(ed.file); return ed.up; }
+const edStickers = () => ed.stickers.map(({ answers, ...k }) => (k.type === 'poll' ? { ...k, answers: answers.map(a => a.text ?? a) } : k));
 const TEXT_COLORS = ['#FFFFFF', '#14121A', '#FF6B4A', '#6FE3D2', '#F5C04A', '#8E6CFF', '#E05A8A'];
-function openEditor(file, kind) {
-  Object.assign(ed, { file, kind, stickers: [], sel: -1 });
+function openEditor(file, kind, opts = {}) {
   if (ed.url) URL.revokeObjectURL(ed.url);
-  ed.url = URL.createObjectURL(file);
-  $('#sedit-media').innerHTML = kind === 'video' ? `<video src="${ed.url}" autoplay loop playsinline></video>` : `<img class="s-fill" src="${ed.url}" alt="" aria-hidden="true"><img class="s-main" src="${ed.url}" alt="">`;
+  Object.assign(ed, { file, kind, stickers: (opts.stickers || []).map(k => (k.type === 'poll' ? { ...k, answers: k.answers.map(a => ({ text: a.text ?? a })) } : { ...k })),
+    sel: -1, up: opts.up || null, memoryId: opts.memoryId || null, remote: opts.url || null });
+  ed.url = file ? URL.createObjectURL(file) : null;
+  const src = ed.url || opts.url;
+  $('#sedit-save').classList.toggle('done', !!opts.memoryId);
+  $('#sedit-save span').textContent = opts.memoryId ? 'Supprimer' : 'Souvenirs';
+  $('#sedit-media').innerHTML = kind === 'video' ? `<video src="${esc(src)}" autoplay loop playsinline muted></video><button class="s-ico s-sound" data-ed-sound aria-label="Activer le son">${SI.muted}</button>` : `<img class="s-fill" src="${esc(src)}" alt="" aria-hidden="true"><img class="s-main" src="${esc(src)}" alt="">`;
   replay($('#sedit-stage'), 'opening');
+  $('#sedit-media video')?.play().catch(() => {});
   $('#sedit').hidden = false; document.body.classList.add('story-open');
   renderStickers($('#sedit-layer'), ed.stickers, { edit: true });
 }
@@ -246,7 +291,7 @@ function closeEditor() {
   if (ed.url) { URL.revokeObjectURL(ed.url); ed.url = null; }
   if ($('#scam').hidden && $('#sview').hidden) document.body.classList.remove('story-open');
 }
-$('#sedit-back').onclick = () => { closeEditor(); openCamera(); };
+$('#sedit-back').onclick = () => { const fromMem = ed.memoryId; closeEditor(); openCamera().then(() => { if (fromMem) openMemories(); }); };
 function stickerHTML(k, i, opts = {}) {
   const pos = `left:${(k.x * 100).toFixed(2)}%;top:${(k.y * 100).toFixed(2)}%;transform:translate(-50%,-50%) rotate(${k.rot || 0}deg)`;
   if (k.type === 'text') return `<div class="stk text ${opts.edit ? 'drag' : ''}" data-stk="${i}" style="${pos};color:${esc(k.color)};font-size:${k.size}px${k.bg ? `;background:${esc(k.bg)}` : ''}">${esc(k.text)}</div>`;
@@ -316,11 +361,11 @@ $('#sedit-share').onclick = async () => {
   const b = $('#sedit-share'); if (b.disabled) return;
   b.disabled = true; b.textContent = 'Envoi…';
   try {
-    const up = await upload(ed.file);
-    await request('postStory', { fileId: up.id, stickers: ed.stickers.map(({ answers, ...k }) => (k.type === 'poll' ? { ...k, answers: answers.map(a => a.text) } : k)) });
-    closeEditor(); toast('Story partagée avec tes potes');
+    const up = await edUpload();
+    await request('postStory', { fileId: up.id, stickers: edStickers() });
+    closeEditor(); toast('Story partagée avec tes potes ✨');
   } catch (e) { toast(e.message, true); }
-  b.disabled = false; b.textContent = 'Partager à tes potes';
+  b.disabled = false; b.innerHTML = `<span>Ta story</span>${SI.chevR}`;
 };
 
 // ---------------------------------------------------------------- Visionneuse
@@ -328,7 +373,7 @@ const viewer = { uid: null, list: [], i: 0, timer: null, start: 0, elapsed: 0, p
 function openStoryViewer(uid, storyId) {
   const list = storiesOf(uid); if (!list.length) return toast('Plus de story à voir', true);
   closeCamera(); if (!$('#sedit').hidden) closeEditor();
-  viewer.queue = storyAuthors();
+  viewer.queue = storyAuthors(); viewer.hl = null;
   viewer.uid = uid; viewer.list = list;
   const first = storyId ? list.findIndex(x => x.id === storyId) : list.findIndex(x => !x.seen);
   const sv = $('#sview'); clearTimeout(viewer.closing); sv.classList.remove('closing');
@@ -359,11 +404,20 @@ function showStory(i) {
   $('#sview').style.setProperty('--sbg', x.kind === 'video' ? 'none' : `url("${x.url.replace(/"/g, '')}")`);
   $('#sview').classList.remove('paused');
   const v = $('#sview-media video');
-  if (v) { v.onended = () => nextStory(); v.onerror = () => nextStory(); v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
-  renderViewerChrome();
+  if (v) {
+    v.muted = !!viewer.muted;
+    v.onended = () => nextStory();
+    v.onerror = () => { v.replaceWith(Object.assign(document.createElement('div'), { className: 's-bad', textContent: 'Cette vidéo ne se lit pas sur cet appareil 😕' })); viewer.start = performance.now(); viewer.elapsed = 0; };
+    v.play().catch(() => { v.muted = true; viewer.autoMuted = true; renderSound(); v.play().catch(() => {}); });
+  }
+  renderViewerChrome(); renderSound();
   const lay = $('#sview-layer'); lay.classList.add('pop'); clearTimeout(viewer.popT); viewer.popT = setTimeout(() => lay.classList.remove('pop'), 900);
   if (!x.seen && x.author !== st.me) request('viewStory', { storyId: x.id }).catch(() => {});
   tick();
+}
+function renderSound() {
+  const v = $('#sview-media video'), b = $('#sview-head [data-sound]'); if (!b) return;
+  b.hidden = !v; if (v) { b.innerHTML = v.muted ? SI.muted : SI.sound; b.setAttribute('aria-label', v.muted ? 'Activer le son' : 'Couper le son'); }
 }
 function storyDuration() { const v = $('#sview-media video'); return v ? Math.min(MAX_VIDEO_S * 2, v.duration || MAX_VIDEO_S) * 1000 : IMG_MS; }
 function tick() {
@@ -387,12 +441,14 @@ function setPaused(on) {
 }
 function nextStory() {
   if (viewer.i < viewer.list.length - 1) return showStory(viewer.i + 1);
+  if (viewer.hl) return closeViewerSoft();
   const q = viewer.queue, at = q.indexOf(viewer.uid), nxt = q.slice(at + 1).find(u => unseenStory(u)) || q[at + 1];
   if (nxt && nxt !== viewer.uid) return openStoryViewer(nxt);
   closeViewerSoft();
 }
 function prevStory() {
   if (viewer.i > 0) return showStory(viewer.i - 1);
+  if (viewer.hl) return showStory(0);
   const q = viewer.queue, at = q.indexOf(viewer.uid);
   if (at > 0) { const u = q[at - 1]; viewer.uid = u; viewer.list = storiesOf(u); replay($('#sview-stage'), 'swap-prev'); return showStory(viewer.list.length - 1); }
   showStory(0);
@@ -401,11 +457,19 @@ function renderViewerChrome() {
   const x = viewer.list[viewer.i]; if (!x) return;
   const u = user(x.author), mine = x.author === st.me;
   $('#sview-bars').innerHTML = viewer.list.map((y, j) => `<span><i style="width:${j < viewer.i ? 100 : 0}%"></i></span>`).join('');
+  if (x.hl) {
+    $('#sview-head').innerHTML = `${avatar(u)}<b>${esc(viewer.hl.title)}</b><small>${esc(u.name)} · ${esc(new Date(x.created).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }))}</small><span class="grow"></span>
+      <button class="s-ico" data-sound hidden aria-label="Son">${SI.sound}</button><button class="s-ico" data-close-story aria-label="Fermer">${SI.close}</button>`;
+    renderStickers($('#sview-layer'), x.stickers || [], { mine: true });
+    $('#sview-foot').innerHTML = mine ? `<button class="s-seen" data-hl-remove>${SI.trash}<span>Retirer de « ${esc(viewer.hl.title)} »</span></button>` : '';
+    $('#sview-prev').disabled = viewer.i === 0;
+    return;
+  }
   $('#sview-head').innerHTML = `${avatar(u)}<b>${esc(mine ? 'Ta story' : u.name)}</b><small>${esc(ago(x.created))}</small><span class="grow"></span>
-    ${mine ? `<button class="s-ico" data-del-story aria-label="Supprimer cette story">${SI.trash}</button>` : ''}<button class="s-ico" data-close-story aria-label="Fermer">${SI.close}</button>`;
+    <button class="s-ico" data-sound hidden aria-label="Son">${SI.sound}</button>${mine ? `<button class="s-ico" data-del-story aria-label="Supprimer cette story">${SI.trash}</button>` : ''}<button class="s-ico" data-close-story aria-label="Fermer">${SI.close}</button>`;
   renderStickers($('#sview-layer'), x.stickers || [], { mine });
   $('#sview-foot').innerHTML = mine
-    ? `<button class="s-seen" data-viewers>${SI.eye}<span>${x.viewers?.length ? `Vu par ${x.viewers.length}` : 'Personne ne l\'a encore vue'}</span></button>`
+    ? `<button class="s-seen" data-viewers>${SI.eye}<span>${x.viewers?.length ? `Vu par ${x.viewers.length}` : 'Personne ne l\'a encore vue'}</span></button><span class="grow"></span><button class="s-seen" data-hl>${SI.star}<span>À la une</span></button>`
     : `<form class="s-reply" id="sview-reply"><input id="sview-in" maxlength="500" placeholder="Répondre à ${esc(u.name)}…" autocomplete="off" aria-label="Répondre"><button type="submit" class="s-ico" aria-label="Envoyer">${SI.send}</button></form>
        <button class="s-ico s-like ${x.liked ? 'on' : ''}" data-like-story aria-label="${x.liked ? 'Je n\'aime plus' : 'J\'aime'}">${x.liked ? SI.heartFill : SI.heart}</button>`;
   $('#sview-prev').disabled = viewer.i === 0 && viewer.queue.indexOf(viewer.uid) <= 0;
@@ -415,6 +479,22 @@ $('#sview').addEventListener('click', e => {
   if (e.target.closest('[data-close-story]') || e.target === $('#sview')) return closeViewerSoft();
   if (e.target.closest('#sview-prev')) return prevStory();
   if (e.target.closest('#sview-next')) return nextStory();
+  if (e.target.closest('[data-hl]')) { pickHighlight(x); return; }
+  if (e.target.closest('[data-hl-remove]')) {
+    return request('editHighlight', { highlightId: viewer.hl.id, removeItem: x.id }).then(() => {
+      toast('Retirée de « ' + viewer.hl.title + ' »'); viewer.list.splice(viewer.i, 1); viewer.hl.items = viewer.list;
+      viewer.list.length ? showStory(Math.min(viewer.i, viewer.list.length - 1)) : closeViewerSoft();
+    }, err => toast(err.message, true));
+  }
+  const hp = e.target.closest('[data-hl-pick]');
+  if (hp) {
+    const title = hp.dataset.hlPick === 'new' ? ($('#hl-new')?.value.trim() || '') : '';
+    if (hp.dataset.hlPick === 'new' && !title) { $('#hl-new')?.focus(); return; }
+    return request('addHighlight', { storyId: x.id, highlightId: hp.dataset.hlPick === 'new' ? null : hp.dataset.hlPick, title }).then(r => {
+      $('#sview-viewers').hidden = true; setPaused(false); toast(`Ajoutée à « ${r.title} » ⭐`);
+    }, err => toast(err.message, true));
+  }
+  if (e.target.closest('[data-sound]')) { const v = $('#sview-media video'); if (v) { v.muted = !v.muted; viewer.muted = v.muted; if (!v.muted) v.play().catch(() => {}); renderSound(); } return; }
   if (e.target.closest('[data-like-story]')) { if (!x.liked) heartBurst(); return request('likeStory', { storyId: x.id }).catch(err => toast(err.message, true)); }
   const vt = e.target.closest('[data-vote]');
   if (vt) { const [k, a] = vt.dataset.vote.split(':'); return request('voteStory', { storyId: x.id, sticker: Number(k), answer: a }).catch(err => toast(err.message, true)); }
@@ -473,3 +553,96 @@ function fly() {
   st0.appendChild(f); setTimeout(() => f.remove(), 900);
 }
 $('#sview').addEventListener('animationend', e => { if (e.target.id === 'sview') e.target.classList.remove('opening'); });
+
+$('#sedit').addEventListener('click', e => {
+  if (!e.target.closest('[data-ed-sound]')) return;
+  const v = $('#sedit-media video'), b = e.target.closest('[data-ed-sound]'); if (!v) return;
+  v.muted = !v.muted; if (!v.muted) v.play().catch(() => {});
+  b.innerHTML = v.muted ? SI.muted : SI.sound;
+});
+
+// ---------------------------------------------------------------- Souvenirs (comme sur Snapchat : tes photos gardées pour toi)
+$('#sedit-save').onclick = async () => {
+  const b = $('#sedit-save'); if (b.disabled) return; b.disabled = true;
+  try {
+    if (ed.memoryId) {
+      if (!confirm('Supprimer ce souvenir ?')) return;
+      const r = await request('deleteMemory', { memoryId: ed.memoryId }); st.memories = r.memories;
+      toast('Souvenir supprimé'); closeEditor(); openCamera().then(openMemories); return;
+    }
+    const up = await edUpload(); const r = await request('saveMemory', { fileId: up.id, stickers: edStickers() });
+    st.memories = r.memories; b.classList.add('done', 'pop'); setTimeout(() => b.classList.remove('pop'), 500);
+    toast('Gardé dans tes Souvenirs 💾');
+  } catch (e) { toast(e.message, true); } finally { b.disabled = false; }
+};
+$('#sedit-dl').onclick = () => {
+  const a = document.createElement('a'); a.href = ed.url || ed.remote;
+  a.download = `parlotte-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ed.kind === 'video' ? (/mp4|quicktime/.test(ed.file?.type || 'mp4') ? 'mp4' : 'webm') : 'jpg'}`;
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('Enregistré sur ton appareil (ou ouvert : appuie longuement pour l\'enregistrer)');
+};
+// Envoyer à un ou plusieurs potes (photo ou vidéo dans la conversation privée)
+$('#sedit-send').onclick = () => {
+  const friends = st.friends.map(user).filter(Boolean).sort((a, b) => (b.status !== 'offline') - (a.status !== 'offline') || a.name.localeCompare(b.name));
+  if (!friends.length) return toast('Ajoute des potes pour leur envoyer des photos', true);
+  editorModal(`<form class="s-form" id="ssend-form"><h3>Envoyer à…</h3><div class="ssend-list">${friends.map(u => `<label class="ssend-row">${avatar(u)}<span>${esc(u.name)}</span><input type="checkbox" value="${esc(u.id)}"></label>`).join('')}</div>
+    <menu><button type="button" data-cancel>Annuler</button><button class="primary" id="ssend-go" disabled>Envoyer</button></menu></form>`);
+};
+$('#sedit-input').addEventListener('change', e => { if (e.target.closest('#ssend-form')) $('#ssend-go').disabled = !$('#ssend-form').querySelector('input:checked'); });
+$('#sedit-input').addEventListener('submit', async e => {
+  if (e.target.id !== 'ssend-form') return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const ids = [...e.target.querySelectorAll('input:checked')].map(i => i.value), go = $('#ssend-go'); if (!ids.length) return;
+  go.disabled = true; go.textContent = 'Envoi…';
+  try {
+    const up = await edUpload();
+    for (const uid of ids) { const r = await request('dmChannel', { userId: uid }); await request('send', { channelId: r.channel, content: '', attachments: [up.id] }); }
+    $('#sedit-input').hidden = true; closeEditor();
+    toast(`Envoyé à ${ids.map(u => user(u).name).join(', ')} 📨`);
+  } catch (err) { toast(err.message, true); go.disabled = false; go.textContent = 'Envoyer'; }
+}, true);
+function openMemories() {
+  const list = st.memories || [];
+  $('#smem-grid').innerHTML = list.length ? list.map(m => `<button class="mcell" data-mem="${esc(m.id)}">${m.kind === 'video'
+    ? `<video src="${esc(m.url)}#t=0.1" muted playsinline preload="metadata"></video><i class="mplay">${SI.play}</i>` : `<img src="${esc(m.url)}" alt="" loading="lazy">`}
+    <small>${esc(new Date(m.created).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }))}</small></button>`).join('')
+    : `<div class="mempty">${SI.memories}<b>Pas encore de souvenirs</b><p>Prends une photo, puis touche « Souvenirs » pour la garder ici, rien que pour toi.</p></div>`;
+  $('#smem').hidden = false; replay($('#smem .msheet'), 'opening');
+}
+$('#scam-mem').onclick = openMemories;
+$('#smem-close').onclick = () => { $('#smem').hidden = true; };
+$('#smem').addEventListener('click', e => {
+  if (e.target === $('#smem')) { $('#smem').hidden = true; return; }
+  const c = e.target.closest('[data-mem]'); if (!c) return;
+  const m = (st.memories || []).find(x => x.id === c.dataset.mem); if (!m) return;
+  $('#smem').hidden = true; stopCamera(); $('#scam').hidden = true;
+  openEditor(null, m.kind, { url: m.url, up: { id: m.fileId, url: m.url }, stickers: m.stickers, memoryId: m.id });
+});
+
+// ---------------------------------------------------------------- À la une
+async function pickHighlight(x) {
+  setPaused(true);
+  const m = $('#sview-viewers');
+  m.innerHTML = `<div class="s-form"><h3>${SI.star} Mettre à la une</h3><p class="small">Elle restera sur ton profil, même après 24 h.</p><div class="hl-pick" id="hl-pick"><p class="small">Chargement…</p></div>
+    <div class="hl-newrow"><input id="hl-new" maxlength="24" placeholder="Nouvelle : Vacances, Soirées…"><button class="primary" data-hl-pick="new">Créer</button></div>
+    <menu><button data-close-viewers>Annuler</button></menu></div>`;
+  m.hidden = false;
+  try {
+    const r = await request('getProfile', { userId: st.me });
+    $('#hl-pick').innerHTML = r.highlights.length ? r.highlights.map(h => `<button class="hl-chip" data-hl-pick="${esc(h.id)}">${hlCoverHTML(h)}<span>${esc(h.title)}</span></button>`).join('')
+      : '<p class="small">Crée ta première « À la une » :</p>';
+  } catch { $('#hl-pick').innerHTML = ''; }
+}
+function hlCoverHTML(h) {
+  return `<i class="hl-cover">${h.coverKind === 'video' ? `<video src="${esc(h.cover)}#t=0.1" muted playsinline preload="metadata"></video>` : h.cover ? `<img src="${esc(h.cover)}" alt="" loading="lazy">` : ''}</i>`;
+}
+function openHighlight(uid, h, start = 0) {
+  if (!h?.items?.length) return toast('Cette « À la une » est vide', true);
+  closeCamera(); if (!$('#sedit').hidden) closeEditor();
+  viewer.hl = h; viewer.uid = uid; viewer.queue = [];
+  viewer.list = h.items.map(i => ({ ...i, author: uid, hl: h.id, seen: true }));
+  const sv = $('#sview'); clearTimeout(viewer.closing); sv.classList.remove('closing');
+  if (sv.hidden) replay(sv, 'opening');
+  sv.hidden = false; document.body.classList.add('story-open');
+  showStory(start);
+}

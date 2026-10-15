@@ -91,8 +91,21 @@ function presenceSettingsHTML() {
   return `<h4>Statut</h4>
     <label class="fld">Passer en « Absent » après <select id="p-idle">${[[5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [0, 'Jamais']]
       .map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('')}</select> sans activité</label>
-    ${desk?.setShowGame ? `<label class="chk"><input type="checkbox" id="p-game" ${desktopInfo?.showGame === false ? '' : 'checked'}> Afficher le jeu auquel je joue (« 🎮 Joue à … »)</label>` : ''}`;
+    ${desk?.setShowGame ? `<label class="chk"><input type="checkbox" id="p-game" ${desktopInfo?.showGame === false ? '' : 'checked'}> Afficher le jeu auquel je joue (« 🎮 Joue à … »)</label>` : ''}
+    ${desk?.backups && desktopInfo?.hosting ? (setTimeout(fillBackups, 0), `<h4>Sauvegardes du serveur</h4>
+      <p class="small">Tu héberges Parlotte : une copie de tout (comptes, messages, serveurs) est faite au démarrage puis toutes les 6 h. Les 20 dernières sont gardées.</p>
+      <div id="p-backups" class="bk-list"><p class="small">Chargement…</p></div><button type="button" class="pill-btn" id="p-backup-now">💾 Sauvegarder maintenant</button>`) : ''}`;
 }
+async function fillBackups() {
+  const box = $('#p-backups'); if (!box) return;
+  const list = await desk.backups().catch(() => []);
+  box.innerHTML = list.length ? list.map(b => `<div class="bk-row"><span>💾 ${esc(b.label)}${/avant-restauration/.test(b.file) ? ' <small>(avant restauration)</small>' : ''}</span><button type="button" class="pill-btn" data-restore="${esc(b.file)}">Restaurer</button></div>`).join('')
+    : '<p class="small">Aucune sauvegarde pour l\'instant.</p>';
+}
+$('#settings-dlg').addEventListener('click', async e => {
+  if (e.target.closest('#p-backup-now')) { const n = await desk.backupNow(); toast(n ? 'Sauvegarde faite ✔' : 'Rien à sauvegarder pour l\'instant'); fillBackups(); }
+  const r = e.target.closest('[data-restore]'); if (r) desk.restore(r.dataset.restore); // l'app demande confirmation
+});
 $('#settings-dlg').addEventListener('change', e => {
   if (e.target.id === 'p-idle') { prefs.idleMin = Number(e.target.value); savePrefs(); sentIdle = null; checkIdle(); }
   if (e.target.id === 'p-game') { desk.setShowGame(e.target.checked); if (desktopInfo) desktopInfo.showGame = e.target.checked; }

@@ -290,7 +290,7 @@ function bubblesHTML(c, list) {
         ${m.story ? storyReplyHTML(m, mine) : ''}
         ${m.reply_to ? `<div class="breply" data-jump="${m.reply_to}">${ref ? `<b>${esc(ref.author_id === st.me ? 'Toi' : user(ref.author_id).name)}</b> ${esc((ref.content || 'pièce jointe').slice(0, 70))}` : '<i>Message supprimé</i>'}</div>` : ''}
         ${m.content ? `<div class="bubble ${big ? 'big' : ''}" title="${esc(time(m.timestamp))}"><div class="text ${big ? 'big-emoji' : ''}">${format(m.content)}</div>${m.edited ? '<span class="edited">modifié</span>' : ''}</div>` : ''}
-        ${attachmentsHTML(m.attachments)}${m.poll ? pollHTML(m, c) : ''}
+        ${attachmentsHTML(m.attachments)}${m.poll ? pollHTML(m, c) : ''}${m.game && typeof gameHTML === 'function' ? gameHTML(m) : ''}
         ${Object.keys(m.reactions || {}).length ? `<div class="reacts">${Object.entries(m.reactions).map(([e, who]) =>
           `<button class="react ${who.includes(st.me) ? 'mine' : ''}" data-react="${esc(e)}" title="${esc(who.map(w => user(w).name).join(', '))}">${reactionHTML(e)}${who.length > 1 ? ' ' + who.length : ''}</button>`).join('')}</div>` : ''}
       </div>
@@ -400,9 +400,9 @@ function onActivity(item) {
 }
 function activityHTML() {
   const f = st.view.afilter || 'all', all = st.activity || [];
-  const list = all.filter(a => f === 'all' || a.type === { invites: 'invite', mentions: 'mention', likes: 'like' }[f] || (f === 'likes' && a.type === 'storylike'));
+  const list = all.filter(a => f === 'all' || a.type === { invites: 'invite', mentions: 'mention', likes: 'like' }[f] || (f === 'likes' && a.type === 'storylike') || (f === 'events' && /^event/.test(a.type)));
   const nInv = all.filter(a => a.type === 'invite' && !a.done && !a.joined && !a.gone).length;
-  const chips = `<div class="chips act-chips" role="tablist">${[['all', 'Tout'], ['invites', `Invitations${nInv ? ' · ' + nInv : ''}`], ['mentions', 'Mentions'], ['likes', 'J\'aime']]
+  const chips = `<div class="chips act-chips" role="tablist">${[['all', 'Tout'], ['invites', `Invitations${nInv ? ' · ' + nInv : ''}`], ['mentions', 'Mentions'], ['events', 'Événements'], ['likes', 'J\'aime']]
     .map(([k, l]) => `<button role="tab" aria-selected="${f === k}" data-afilter="${k}" class="chip ${f === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
   const row = a => {
     const u = user(a.from), when = ago(a.at), cls = `act-item ${a.seen ? '' : 'new'}`;
@@ -415,12 +415,18 @@ function activityHTML() {
     }
     const where = a.channelId && chanById(a.channelId);
     const place = where ? (where.type === 'dm' ? (where.group ? groupName(where) : 'en privé') : `#${esc(where.name)}${a.serverId ? ' · ' + esc(st.servers.find(x => x.id === a.serverId)?.name || '') : ''}`) : '';
+    if (a.type === 'event' || a.type === 'eventSoon') {
+      const d = new Date(a.start), ev = st.servers.find(x => x.id === a.serverId)?.events?.find(x => x.id === a.eventId);
+      return `<button class="${cls} ev-act" data-act-event="${esc(a.serverId)}"><span class="ev-date"><small>${esc(d.toLocaleDateString('fr-FR', { month: 'short' }).replace('.', ''))}</small><b>${d.getDate()}</b></span>
+        <div class="ai-txt">${a.type === 'eventSoon' ? `⏰ <b>${esc(a.text)}</b> commence ${esc(evWhen(a.start))} !` : `<b>${esc(u.name)}</b> organise <b>${esc(a.text)}</b> sur ${esc(a.serverName || '')}`}
+        <small>${esc(evWhen(a.start))}${ev ? ` · ${ev.going.length} vien${ev.going.length > 1 ? 'nent' : 't'}` : ''} · ${when}</small></div></button>`;
+    }
     if (a.type === 'storylike') return `<button class="${cls}" data-act-story="${esc(a.storyId)}">${avatar(u)}<div class="ai-txt"><b>${esc(u.name)}</b> a aimé ta story<small>${when}</small></div>${storyThumbHTML(a)}</button>`;
     if (a.type === 'mention') return `<button class="${cls}" data-act-go="${a.id}">${avatar(u)}<div class="ai-txt"><b>${esc(u.name)}</b> t'a mentionné dans <b>${place}</b>
       <span class="ai-quote">${esc(a.text)}</span><small>${when}</small></div></button>`;
     return `<button class="${cls}" data-act-go="${a.id}">${avatar(u)}<div class="ai-txt"><b>${esc(u.name)}</b> a réagi ${reactionHTML(a.emoji)} à ton message${a.text ? ` : <span class="ai-q">« ${esc(a.text)} »</span>` : ''}<small>${place ? place + ' · ' : ''}${when}</small></div></button>`;
   };
-  const groups = f === 'all' ? [['Invitations', list.filter(a => a.type === 'invite')], ['Mentions', list.filter(a => a.type === 'mention')], ['J\'aime', list.filter(a => a.type === 'like' || a.type === 'storylike')]] : [['', list]];
+  const groups = f === 'all' ? [['Invitations', list.filter(a => a.type === 'invite')], ['Mentions', list.filter(a => a.type === 'mention')], ['Événements', list.filter(a => /^event/.test(a.type))], ['J\'aime', list.filter(a => a.type === 'like' || a.type === 'storylike')]] : [['', list]];
   const body = groups.filter(([, l]) => l.length).map(([t, l]) => `${t ? `<h3 class="act-h">${t}</h3>` : ''}${l.map(row).join('')}`).join('');
   return `<div class="activity">${chips}${body || `<div class="empty-state big"><div class="es-ico">${ICON.heart}</div><h2>Rien de neuf</h2><p>Les invitations à des serveurs, les mentions et les réactions à tes messages arriveront ici.</p></div>`}</div>`;
 }
@@ -430,6 +436,8 @@ $('#view').addEventListener('click', e => {
     const acc = e.target.closest('[data-inv-accept]'); if (acc) return act('acceptInvite', { activityId: acc.dataset.invAccept });
     const dis = e.target.closest('[data-act-dismiss]'); if (dis) return act('dismissActivity', { activityId: dis.dataset.actDismiss });
     const op = e.target.closest('[data-act-open]'); if (op) { const s = st.servers.find(x => x.id === op.dataset.actOpen); if (s) openChannel(s.id, firstText(s)); return; }
+    const ae = e.target.closest('[data-act-event]');
+    if (ae) { const s = st.servers.find(x => x.id === ae.dataset.actEvent); if (!s) return toast('Tu n\'es plus sur ce serveur', true); openChannel(s.id, firstText(s)); return openEvents(); }
     const so = e.target.closest('[data-act-story]');
     if (so) { const x = (st.stories || []).find(y => y.id === so.dataset.actStory); return x ? openStoryViewer(x.author, x.id) : toast('Cette story a expiré', true); }
     const go = e.target.closest('[data-act-go]');

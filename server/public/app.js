@@ -79,7 +79,7 @@ function handle(m) {
       P = m.P || P;
       st.blocked = m.blocked || [];
       Object.assign(st, { users: m.users, servers: m.servers, dms: m.dms, friends: m.friends, incoming: m.incoming, outgoing: m.outgoing, lastByChannel: m.lastByChannel, voice: m.voice || {},
-        previews: m.previews || {}, activity: m.activity || [], stories: m.stories || [] });
+        previews: m.previews || {}, activity: m.activity || [], stories: m.stories || [], memories: m.memories || [] });
       for (const [c, ts] of Object.entries(m.lastByChannel)) if (!st.unread[c] && ts > (st.read[c] || '') && c !== st.view.channel) st.unread[c] = '•';
       if (!isSpecial(st.view.server) && !server()) Object.assign(st.view, { server: '@me', channel: null });
       if (st.view.channel && !channel()) st.view.channel = st.view.server === '@me' ? null : firstText(server());
@@ -358,7 +358,7 @@ function renderMain(scroll) {
         ${m.reply_to ? `<div class="replyto" data-jump="${m.reply_to}">↪ ${ref ? `<b>@${esc(user(ref.author_id).name)}</b> ${esc(ref.content.slice(0, 80))}` : '<i>Message original non chargé ou supprimé</i>'}</div>` : ''}
         ${first ? `<div><span class="who" data-user="${esc(u.id)}" style="color:${esc(c.type === 'dm' ? u.color : nameColor(u.id, u.color))}">${esc(u.name)}</span>${u.bot ? ' <span class="mention">SYSTÈME</span>' : ''}<span class="when">${dayLabel(m.timestamp)} à ${time(m.timestamp)}</span>${m.pinned ? ' 📌' : ''}</div>` : ''}
         ${m.content ? `<div class="text ${/^(\s*<:\w{2,32}:[0-9a-z]+>\s*){1,10}$/.test(m.content) ? 'big-emoji' : ''}">${format(m.content)}${m.edited ? ' <span class="edited">(modifié)</span>' : ''}</div>` : ''}
-        ${attachmentsHTML(m.attachments)}${m.poll ? pollHTML(m, c) : ''}${m.thread ? threadChipHTML(m.thread) : ''}
+        ${attachmentsHTML(m.attachments)}${m.poll ? pollHTML(m, c) : ''}${m.game && typeof gameHTML === 'function' ? gameHTML(m) : ''}${m.thread ? threadChipHTML(m.thread) : ''}
         ${Object.keys(m.reactions || {}).length ? `<div class="reacts">${Object.entries(m.reactions).map(([e, who]) =>
           `<button class="react ${who.includes(st.me) ? 'mine' : ''}" data-react="${esc(e)}" title="${esc(who.map(w => user(w).name).join(', '))}">${reactionHTML(e)} ${who.length}</button>`).join('')}</div>` : ''}
       </div>
@@ -619,7 +619,7 @@ document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.ke
 
 
 // ---------------------------------------------------------------- Pièces jointes
-const MAX_FILE = 10 * 1024 * 1024;
+const MAX_FILE = 25 * 1024 * 1024;
 const pendingFiles = []; // {key, file, preview, upload (Promise), result}
 const fmtSize = n => n < 1024 ? n + ' o' : n < 1048576 ? (n / 1024).toFixed(0) + ' Ko' : (n / 1048576).toFixed(1) + ' Mo';
 const fileIcon = t => /^image\//.test(t) ? '🖼️' : /^video\//.test(t) ? '🎞️' : /^audio\//.test(t) ? '🎵' : /pdf/.test(t) ? '📕' : /zip|rar|7z|compressed/.test(t) ? '🗜️' : '📄';
@@ -645,7 +645,7 @@ function addFiles(files) {
   if (!st.view.channel) return toast('Ouvre un salon ou une conversation d\'abord', true);
   for (const file of files) {
     if (pendingFiles.length >= 10) { toast('10 fichiers maximum par message', true); break; }
-    if (file.size > MAX_FILE) { toast(`${file.name} est trop lourd (10 Mo max)`, true); continue; }
+    if (file.size > MAX_FILE) { toast(`${file.name} est trop lourd (25 Mo max)`, true); continue; }
     const p = { key: Math.random().toString(36).slice(2), file, preview: /^image\//.test(file.type) ? URL.createObjectURL(file) : null };
     p.upload = upload(file).then(r => (p.result = r)).catch(e => { toast(e.message, true); removePending(p.key); });
     pendingFiles.push(p);
@@ -710,7 +710,7 @@ $('#prof-upload').onclick = () => $('#prof-file').click();
 $('#prof-remove').onclick = () => { profAvatar = null; $('#prof-av').innerHTML = avatar({ ...user(st.me), avatar: null, color: $('#prof-color').value }); };
 $('#prof-file').onchange = async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  if (f.size > MAX_FILE) return toast('Image trop lourde (10 Mo max)', true);
+  if (f.size > MAX_FILE) return toast('Image trop lourde (25 Mo max)', true);
   try { const r = await upload(f); profAvatar = r.id; $('#prof-av').innerHTML = avatar({ ...user(st.me), avatar: r.url }); }
   catch (err) { toast(err.message, true); }
 };
@@ -1427,11 +1427,37 @@ document.addEventListener('click', e => {
   if (wave && !btn) { const r = wave.getBoundingClientRect(), dur = isFinite(a.duration) ? a.duration : Number(box.dataset.dur); a.currentTime = Math.max(0, (e.clientX - r.left) / r.width) * dur; }
   if (btn || a.paused) {
     if (vCurrent && vCurrent !== a) vCurrent.pause();
-    if (a.paused) a.play().catch(() => toast('Lecture impossible sur cet appareil', true)); else a.pause();
+    if (a.paused) a.play().catch(() => playDecoded(url)); else a.pause();
     vCurrent = a;
   }
 });
 
+// Dernier recours (vieux messages en .webm sur iPhone) : on décode nous-mêmes et on joue sans les contrôles.
+async function playDecoded(url) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)(), data = await (await fetch(url)).arrayBuffer();
+    const buf = await new Promise((res, rej) => ctx.decodeAudioData(data, res, rej));
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination); src.start(); src.onended = () => ctx.close();
+  } catch { toast('Ce vieux message vocal ne se lit pas sur cet appareil (les nouveaux, si)', true); }
+}
+// Les messages vocaux sont convertis en MP3 avant l'envoi : c'est le seul format lisible partout (iPhone compris).
+function loadScript(src) {
+  return new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)) return res(); const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+}
+async function toMp3(blob) {
+  await loadScript('vendor/lame.min.js');
+  const ctx = new (window.AudioContext || window.webkitAudioContext)(), data = await blob.arrayBuffer();
+  const buf = await new Promise((res, rej) => ctx.decodeAudioData(data, res, rej)); ctx.close();
+  const ch = [...Array(buf.numberOfChannels).keys()].map(i => buf.getChannelData(i));
+  let rate = buf.sampleRate, step = rate >= 44100 ? 2 : 1; rate = rate / step;
+  if (![8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000].includes(rate)) throw new Error('fréquence');
+  const n = Math.floor(buf.length / step), pcm = new Int16Array(n);
+  for (let i = 0; i < n; i++) { let v = 0; for (const c of ch) for (let k = 0; k < step; k++) v += c[i * step + k] || 0; v /= ch.length * step; pcm[i] = Math.max(-32768, Math.min(32767, v * 32767)); }
+  const enc = new lamejs.Mp3Encoder(1, rate, 48), out = [];
+  for (let i = 0; i < n; i += 1152) { const b = enc.encodeBuffer(pcm.subarray(i, i + 1152)); if (b.length) out.push(new Uint8Array(b)); }
+  const end = enc.flush(); if (end.length) out.push(new Uint8Array(end));
+  return new Blob(out, { type: 'audio/mpeg' });
+}
 const rec = { mr: null, stream: null, chunks: [], start: 0, levels: [], timer: null, analyser: null, ctx: null };
 $('#rec-btn').onclick = async () => {
   if (rec.mr) return;
@@ -1476,8 +1502,9 @@ async function finishRecording(send) {
   // Forme d'onde réduite à 48 barres
   const n = 48, waveform = Array.from({ length: n }, (_, i) => { const sl = levels.slice(Math.floor(i * levels.length / n), Math.floor((i + 1) * levels.length / n) || undefined); return sl.length ? Math.round(Math.max(...sl)) : 0; });
   const peak = Math.max(1, ...waveform), norm = waveform.map(v => Math.round(v * 100 / peak));
-  const ext = /mp4/.test(blob.type) ? 'm4a' : /ogg/.test(blob.type) ? 'ogg' : 'webm';
-  const file = new File([blob], `message-vocal.${ext}`, { type: blob.type.split(';')[0] });
+  let out = blob; try { out = await toMp3(blob); } catch (e) { console.warn('MP3 impossible, envoi tel quel', e); }
+  const ext = /mpeg/.test(out.type) ? 'mp3' : /mp4/.test(out.type) ? 'm4a' : /ogg/.test(out.type) ? 'ogg' : 'webm';
+  const file = new File([out], `message-vocal.${ext}`, { type: out.type.split(';')[0] });
   try {
     const up = await upload(file);
     await request('send', { channelId: st.view.channel, content: '', attachments: [up.id], voiceNote: { duration, waveform: norm }, replyTo });

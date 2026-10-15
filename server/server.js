@@ -17,13 +17,13 @@ const DATA_DIR = process.env.PARLOTTE_DATA || __dirname;
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const UPLOADS = path.join(DATA_DIR, 'uploads');
-const MAX_UPLOAD = 10 * 1024 * 1024; // 10 Mo par fichier
+const MAX_UPLOAD = 25 * 1024 * 1024; // 25 Mo par fichier (vidéos de téléphone)
 fs.mkdirSync(UPLOADS, { recursive: true });
 // Seuls ces types sont affichés directement dans le navigateur ; tout le reste est servi en téléchargement
 // (sinon un fichier .html ou .svg envoyé par quelqu'un pourrait exécuter du code dans l'app).
 const INLINE_TYPES = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp',
   'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav',
-  'audio/webm': '.webm', 'audio/mp4': '.m4a', 'audio/aac': '.aac' };
+  'audio/webm': '.webm', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'video/quicktime': '.mov', 'audio/x-m4a': '.m4a' };
 require(path.join(PUBLIC, 'search.js'));            // même moteur de recherche que le client
 const Search = globalThis.DiscordLikeSearch;
 
@@ -44,6 +44,8 @@ try { db = Object.assign(empty(), JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))
 let migrated = false;
 if (!db.activity) { db.activity = {}; migrated = true; }
 if (!db.stories) { db.stories = []; migrated = true; }
+if (!db.memories) { db.memories = []; migrated = true; }
+if (!db.events) { db.events = []; migrated = true; }
 for (const s of Object.values(db.servers)) {
   if (!s.channels.some(c => db.channels[c]?.type === 'voice')) {
     migrated = true;
@@ -110,7 +112,8 @@ const activityOf = uid => {
 };
 const fileUrl = fid => (fid && db.uploads[fid] ? `/uploads/${fid}` : null);
 const publicUser = u => ({ id: u.id, name: u.name, color: u.color, status: status(u.id), bot: !!u.bot,
-  avatar: fileUrl(u.avatar), about: u.about || '', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji, activity: activityOf(u.id) });
+  avatar: fileUrl(u.avatar), about: u.about || '', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji, activity: activityOf(u.id),
+  banner: fileUrl(u.banner), accent: u.accent || null, pronouns: u.pronouns || '', highlights: (u.highlights || []).length });
 const serversOf = uid => Object.values(db.servers).filter(s => s.members.includes(uid));
 const dmsOf = uid => Object.values(db.channels).filter(c => c.type === 'dm' && c.members.includes(uid));
 const roleIdsOf = (s, uid) => [s.id, ...((s.memberRoles || {})[uid] || [])];
@@ -164,7 +167,7 @@ function bootstrap(uid) {
       invite: my & P.INVITE ? s.invite : null, bans: my & P.BAN ? s.bans : [],
       channels: s.channels.map(cid => db.channels[cid]).filter(c => c && canAccess(uid, c)).map(c => ({ ...c, perms: channelPerms(c, uid) })),
       threads: threadsOf(s).filter(t => canAccess(uid, t)).map(t => ({ ...t, perms: channelPerms(t, uid) })),
-      emojis: (s.emojis || []).map(publicEmoji), sounds: (s.sounds || []).map(publicSound) };
+      emojis: (s.emojis || []).map(publicEmoji), sounds: (s.sounds || []).map(publicSound), events: eventsOf(s.id) };
   });
   const dms = dmsOf(uid);
   const userIds = new Set([uid]);
@@ -187,7 +190,7 @@ function bootstrap(uid) {
     incoming: rel.filter(f => !f.accepted && f.to === uid).map(f => f.from),
     outgoing: rel.filter(f => !f.accepted && f.from === uid).map(f => f.to),
     activity: (db.activity[uid] || []).slice(0, 60).map(publicActivity),
-    stories: storiesFor(uid),
+    stories: storiesFor(uid), memories: memoriesOf(uid),
   };
 }
 
@@ -226,6 +229,47 @@ function cleanStickers(list) {
     return { type: 'text', ...base, text, color: /^#[0-9a-f]{6}$/i.test(k.color) ? k.color : '#ffffff',
       bg: /^#[0-9a-f]{6}$/i.test(k.bg) ? k.bg : null, size: num(k.size, 14, 56, 28) };
   }).filter(Boolean);
+}
+// ---------------------------------------------------------------- Souvenirs (photos et vidéos gardées pour soi)
+const memoriesOf = uid => db.memories.filter(m => m.owner === uid && db.uploads[m.file]).sort((a, b) => b.created.localeCompare(a.created))
+  .map(m => ({ id: m.id, url: fileUrl(m.file), fileId: m.file, kind: m.kind, stickers: m.stickers, created: m.created }));
+const editorStickers = list => cleanStickers(list).map(k => (k.type === 'poll' ? { ...k, answers: k.answers.map(a => a.text) } : k));
+// ---------------------------------------------------------------- À la une (stories gardées sur le profil)
+const highlightStickers = list => list.map(k => (k.type !== 'poll' ? k : { ...k, answers: k.answers.map(a => ({ id: a.id, text: a.text, count: a.votes.length, mine: false })) }));
+const publicHighlights = u => (u.highlights || []).map(h => ({ id: h.id, title: h.title, cover: fileUrl(h.items[0]?.file), coverKind: h.items[0]?.kind,
+  items: h.items.filter(i => db.uploads[i.file]).map(i => ({ id: i.id, url: fileUrl(i.file), kind: i.kind, stickers: highlightStickers(i.stickers || []), created: i.created })) }));
+// ---------------------------------------------------------------- Événements de serveur
+const eventsOf = sid => db.events.filter(e => e.serverId === sid && Date.parse(e.start) > Date.now() - 6 * 3600e3)
+  .sort((a, b) => a.start.localeCompare(b.start)).map(e => ({ id: e.id, title: e.title, description: e.description, start: e.start, author: e.author,
+    channelId: e.channelId || null, cover: fileUrl(e.cover), going: e.going, maybe: e.maybe, created: e.created }));
+setInterval(() => { // rappel 15 min avant
+  const soon = Date.now() + 15 * 60e3;
+  for (const e of db.events) {
+    if (e.reminded || Date.parse(e.start) > soon || Date.parse(e.start) < Date.now() - 60e3) continue;
+    e.reminded = true; const s = db.servers[e.serverId]; if (!s) continue;
+    for (const u of new Set([...e.going, ...e.maybe])) if (s.members.includes(u))
+      pushActivity(u, { type: 'eventSoon', from: e.author, serverId: s.id, serverName: s.name, eventId: e.id, text: e.title, start: e.start });
+    save();
+  }
+}, 30e3).unref();
+// ---------------------------------------------------------------- Sauvegardes automatiques de data.json
+const BACKUP_DIR = path.join(DATA_DIR, 'sauvegardes');
+function backup() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return;
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    fs.copyFileSync(DATA_FILE, path.join(BACKUP_DIR, `data-${stamp}.json`));
+    const all = fs.readdirSync(BACKUP_DIR).filter(f => /^data-.*\.json$/.test(f)).sort();
+    for (const old of all.slice(0, Math.max(0, all.length - 20))) fs.unlinkSync(path.join(BACKUP_DIR, old)); // on garde les 20 dernières
+  } catch (e) { console.error('Sauvegarde impossible :', e.message); }
+}
+setTimeout(backup, 5e3).unref(); setInterval(backup, 6 * 3600e3).unref(); // au démarrage puis toutes les 6 h
+// ---------------------------------------------------------------- Morpion
+const TTT_LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
+function tttWinner(b) {
+  for (const [a, c, d] of TTT_LINES) if (b[a] !== ' ' && b[a] === b[c] && b[a] === b[d]) return { mark: b[a], line: [a, c, d] };
+  return b.includes(' ') ? null : { mark: 'draw', line: [] };
 }
 setInterval(() => { // ménage : les stories expirées disparaissent (les fichiers restent dans les messages qui y répondent)
   const before = db.stories.length; db.stories = db.stories.filter(storyLive);
@@ -1010,7 +1054,7 @@ const handlers = {
   },
 
   // --- Profil
-  setProfile(ws, { presence, customStatus, statusEmoji, statusExpires, about, avatar, color }) {
+  setProfile(ws, { presence, customStatus, statusEmoji, statusExpires, about, avatar, color, banner, accent, pronouns }) {
     const u = db.users[ws.uid];
     if (presence !== undefined) {
       if (!['online', 'idle', 'dnd', 'invisible'].includes(presence)) throw new Error('Statut inconnu');
@@ -1030,6 +1074,16 @@ const handlers = {
     if (!u.customStatus && !u.statusEmoji) u.statusExpires = null;
     if (about !== undefined) u.about = clean(about, 190);
     if (color !== undefined) { if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Couleur invalide'); u.color = color; }
+    if (accent !== undefined) { if (accent !== null && !/^#[0-9a-f]{6}$/i.test(accent)) throw new Error('Couleur invalide'); u.accent = accent || null; }
+    if (pronouns !== undefined) u.pronouns = clean(pronouns, 30);
+    if (banner !== undefined) {
+      if (banner === null) delete u.banner;
+      else if (banner !== u.banner) {
+        const f = db.uploads[banner];
+        if (!f || f.owner !== ws.uid || !/^image\/(png|jpeg|gif|webp)$/.test(f.content_type)) throw new Error('La bannière doit être une image (png, jpg, gif, webp)');
+        u.banner = f.id;
+      }
+    }
     if (avatar !== undefined) {
       if (avatar === null) delete u.avatar;
       else {
@@ -1039,6 +1093,106 @@ const handlers = {
       }
     }
     save(); sendTo(ws.uid, { t: 'profile', profile: ownProfile(u) }); presenceChanged(ws.uid);
+  },
+  // --- Profil enrichi
+  getProfile(ws, { userId }) {
+    const u = db.users[userId]; if (!u || u.bot) throw new Error('Utilisateur introuvable');
+    const me = ws.uid, other = userId !== me;
+    return { t: 'profileData', user: publicUser(u), since: u.created || null,
+      highlights: other && blocked(me, userId) ? [] : publicHighlights(u),
+      mutualServers: other ? serversOf(me).filter(s => s.members.includes(userId)).map(s => s.id) : [],
+      mutualFriends: other ? friendsOf(me).filter(f => friendsOf(userId).includes(f)) : [] };
+  },
+  addHighlight(ws, { storyId, highlightId, title }) {
+    const u = db.users[ws.uid], x = db.stories.find(y => y.id === storyId && y.author === ws.uid);
+    if (!x) throw new Error('Story introuvable');
+    u.highlights = u.highlights || [];
+    let h = highlightId && u.highlights.find(y => y.id === highlightId);
+    if (!h) {
+      if (u.highlights.length >= 12) throw new Error('12 « À la une » maximum');
+      h = { id: id(), title: clean(title, 24) || 'À la une', items: [] }; u.highlights.push(h);
+    }
+    if (h.items.some(i => i.story === x.id)) throw new Error('Déjà dans « ' + h.title + ' »');
+    if (h.items.length >= 40) throw new Error('40 stories maximum par « À la une »');
+    h.items.push({ id: id(), story: x.id, file: x.file, kind: x.kind, stickers: JSON.parse(JSON.stringify(x.stickers)), created: x.created });
+    save(); presenceChanged(ws.uid);
+    return { t: 'highlightSaved', highlightId: h.id, title: h.title };
+  },
+  editHighlight(ws, { highlightId, title, removeItem, remove }) {
+    const u = db.users[ws.uid], h = (u.highlights || []).find(y => y.id === highlightId);
+    if (!h) throw new Error('« À la une » introuvable');
+    if (title !== undefined) h.title = clean(title, 24) || h.title;
+    if (removeItem) h.items = h.items.filter(i => i.id !== removeItem);
+    if (remove || !h.items.length) u.highlights = u.highlights.filter(y => y !== h);
+    save(); presenceChanged(ws.uid);
+  },
+  // --- Souvenirs
+  saveMemory(ws, { fileId, stickers }) {
+    const f = db.uploads[fileId];
+    if (!f || f.owner !== ws.uid || !/^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(f.content_type)) throw new Error('Un souvenir doit être une photo ou une vidéo');
+    if (db.memories.filter(m => m.owner === ws.uid).length >= 500) throw new Error('500 souvenirs maximum : fais un peu de tri');
+    if (!db.memories.some(m => m.owner === ws.uid && m.file === f.id))
+      db.memories.push({ id: id(), owner: ws.uid, file: f.id, kind: f.content_type.startsWith('video/') ? 'video' : 'image', stickers: editorStickers(stickers), created: now() });
+    save(); return { t: 'memories', memories: memoriesOf(ws.uid) };
+  },
+  deleteMemory(ws, { memoryId }) {
+    const before = db.memories.length; db.memories = db.memories.filter(m => !(m.id === memoryId && m.owner === ws.uid));
+    if (db.memories.length === before) throw new Error('Souvenir introuvable');
+    save(); return { t: 'memories', memories: memoriesOf(ws.uid) };
+  },
+  // Envoyer une photo/vidéo à un pote sans ouvrir la conversation
+  dmChannel(ws, { userId }) {
+    const r = handlers.openDM(ws, { userId }); return { t: 'dmChannel', channel: r.channel };
+  },
+  // --- Événements
+  createEvent(ws, { serverId, title, description, start, channelId, cover }) {
+    const s = db.servers[serverId]; if (!s || !s.members.includes(ws.uid)) throw new Error('Serveur introuvable');
+    title = clean(title, 60); if (!title) throw new Error('Donne un nom à l\'événement');
+    const t = Date.parse(start); if (!Number.isFinite(t) || t < Date.now() - 60e3 || t > Date.now() + 366 * 86400e3) throw new Error('Choisis une date à venir');
+    if (eventsOf(s.id).length >= 30) throw new Error('30 événements à venir maximum');
+    let coverId = null;
+    if (cover) { const f = db.uploads[cover]; if (!f || f.owner !== ws.uid || !/^image\//.test(f.content_type)) throw new Error('L\'image doit être une image'); coverId = f.id; }
+    const ch = channelId && db.channels[channelId];
+    const e = { id: id(), serverId: s.id, title, description: clean(description, 400), start: new Date(t).toISOString(), author: ws.uid,
+      channelId: ch && ch.server_id === s.id ? ch.id : null, cover: coverId, going: [ws.uid], maybe: [], created: now(), reminded: false };
+    db.events.push(e); save(); refresh(s.members);
+    for (const u of s.members) if (u !== ws.uid) pushActivity(u, { type: 'event', from: ws.uid, serverId: s.id, serverName: s.name, eventId: e.id, text: title, start: e.start });
+    return { t: 'eventCreated', eventId: e.id };
+  },
+  rsvpEvent(ws, { eventId, answer }) {
+    const e = db.events.find(x => x.id === eventId), s = e && db.servers[e.serverId];
+    if (!s || !s.members.includes(ws.uid)) throw new Error('Événement introuvable');
+    e.going = e.going.filter(u => u !== ws.uid); e.maybe = e.maybe.filter(u => u !== ws.uid);
+    if (answer === 'going') e.going.push(ws.uid); else if (answer === 'maybe') e.maybe.push(ws.uid);
+    save(); refresh(s.members);
+  },
+  deleteEvent(ws, { eventId }) {
+    const e = db.events.find(x => x.id === eventId), s = e && db.servers[e.serverId];
+    if (!s) throw new Error('Événement introuvable');
+    if (e.author !== ws.uid) needServer(ws.uid, s, P.MANAGE_SERVER, 'Seul l\'organisateur ou un admin peut annuler');
+    db.events = db.events.filter(x => x !== e); save(); refresh(s.members);
+  },
+  // --- Morpion
+  startGame(ws, { channelId }) {
+    const ch = db.channels[channelId]; if (!canAccess(ws.uid, ch) || ch.type === 'voice') throw new Error('Salon inaccessible');
+    need(ws.uid, ch, P.SEND, 'Tu ne peux pas écrire dans ce salon');
+    const m = { id: id(), channel_id: channelId, author_id: ws.uid, timestamp: now(), content: '', reactions: {}, mentions: [],
+      game: { type: 'ttt', x: ws.uid, o: null, board: '         ', turn: 'o', winner: null, line: [] } }; // l'adversaire commence
+    db.messages.push(m); save(); broadcast(audienceOf(ch), { t: 'message', message: m });
+  },
+  playGame(ws, { messageId, cell }) {
+    const m = db.messages.find(x => x.id === messageId), ch = m && db.channels[m.channel_id], g = m?.game;
+    if (!g || !canAccess(ws.uid, ch)) throw new Error('Partie introuvable');
+    if (g.winner) throw new Error('La partie est terminée');
+    cell = Number(cell); if (!(cell >= 0 && cell < 9) || g.board[cell] !== ' ') throw new Error('Case déjà prise');
+    if (!g.o && ws.uid !== g.x) g.o = ws.uid; // le premier qui joue contre toi devient le rond
+    const mark = ws.uid === g.x ? 'x' : ws.uid === g.o ? 'o' : null;
+    if (!mark) throw new Error('Cette partie se joue à deux');
+    if (!g.o) throw new Error('Attends qu\'un adversaire joue en premier… ou laisse-le commencer !');
+    if (g.turn !== mark) throw new Error('Ce n\'est pas ton tour');
+    g.board = g.board.slice(0, cell) + mark + g.board.slice(cell + 1);
+    const w = tttWinner(g.board); if (w) { g.winner = w.mark; g.line = w.line; } else g.turn = mark === 'x' ? 'o' : 'x';
+    save(); broadcast(audienceOf(ch), { t: 'messageUpdate', message: m });
   },
   // Recherche côté serveur, comme Discord : on ne cherche que dans les salons accessibles.
   search(ws, { scope, query }) {
@@ -1055,7 +1209,8 @@ const handlers = {
 };
 
 const ownProfile = u => ({ presence: u.presence || 'online', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji,
-  statusExpires: statusExpired(u) ? null : u.statusExpires || null, about: u.about || '', avatar: fileUrl(u.avatar), color: u.color });
+  statusExpires: statusExpired(u) ? null : u.statusExpires || null, about: u.about || '', avatar: fileUrl(u.avatar), color: u.color,
+  banner: fileUrl(u.banner), bannerId: u.banner || null, accent: u.accent || null, pronouns: u.pronouns || '' });
 
 function login(ws, u, token) {
   if (!token) { token = crypto.randomBytes(24).toString('hex'); db.sessions[token] = u.id; save(); }
@@ -1144,11 +1299,11 @@ function handleUpload(req, res) {
   const uid = db.sessions[(req.headers.authorization || '').replace(/^Bearer /, '')];
   if (!uid) return json(res, 401, { error: 'Connecte-toi d\'abord' });
   const declared = Number(req.headers['content-length'] || 0);
-  if (declared > MAX_UPLOAD) { req.resume(); return json(res, 413, { error: 'Fichier trop lourd (10 Mo max)' }); }
+  if (declared > MAX_UPLOAD) { req.resume(); return json(res, 413, { error: 'Fichier trop lourd (25 Mo max)' }); }
   const chunks = []; let size = 0, aborted = false;
   req.on('data', c => {
     size += c.length;
-    if (size > MAX_UPLOAD) { aborted = true; req.destroy(); return json(res, 413, { error: 'Fichier trop lourd (10 Mo max)' }); }
+    if (size > MAX_UPLOAD) { aborted = true; req.destroy(); return json(res, 413, { error: 'Fichier trop lourd (25 Mo max)' }); }
     chunks.push(c);
   });
   req.on('end', () => {
@@ -1168,25 +1323,39 @@ function handleUpload(req, res) {
 }
 
 // GET /uploads/<id> : images/vidéos/sons connus affichés, tout le reste téléchargé.
-function serveUpload(res, fid) {
+// Les requêtes « Range » (morceaux de fichier) sont gérées : sans elles, l'iPhone refuse de lire
+// le moindre son ou la moindre vidéo.
+function serveUpload(req, res, fid) {
   const f = /^[0-9a-f]{24}$/.test(fid) && db.uploads[fid];
   if (!f) { res.writeHead(404); return res.end('Introuvable'); }
-  const inline = !!INLINE_TYPES[f.content_type];
-  res.writeHead(200, {
+  const inline = !!INLINE_TYPES[f.content_type], file = path.join(UPLOADS, f.id);
+  let size; try { size = fs.statSync(file).size; } catch { res.writeHead(404); return res.end('Introuvable'); }
+  const base = {
     'Content-Type': inline ? f.content_type : 'application/octet-stream',
     'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.filename)}`,
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'",
     'Cache-Control': 'private, max-age=31536000, immutable',
-  });
-  fs.createReadStream(path.join(UPLOADS, f.id)).on('error', () => res.end()).pipe(res);
+    'Accept-Ranges': 'bytes',
+  };
+  const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  let start = 0, end = size - 1, status = 200;
+  if (m && (m[1] || m[2])) {
+    if (m[1] === '') { start = Math.max(0, size - Number(m[2])); }
+    else { start = Number(m[1]); if (m[2] !== '') end = Math.min(end, Number(m[2])); }
+    if (start > end || start >= size) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
+    status = 206; base['Content-Range'] = `bytes ${start}-${end}/${size}`;
+  }
+  res.writeHead(status, { ...base, 'Content-Length': size ? end - start + 1 : 0 });
+  if (req.method === 'HEAD' || !size) return res.end();
+  fs.createReadStream(file, { start, end }).on('error', () => res.end()).pipe(res);
 }
 
 const isLocal = host => /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host || '');
 function app(req, res) {
   const pathname = new URL(req.url, 'http://x').pathname;
   if (req.method === 'POST' && pathname === '/upload') return handleUpload(req, res);
-  if (pathname.startsWith('/uploads/')) return serveUpload(res, pathname.slice(9));
+  if (pathname.startsWith('/uploads/')) return serveUpload(req, res, pathname.slice(9));
   let url; try { url = decodeURIComponent(pathname); } catch { res.writeHead(400); return res.end(); }
   const file = path.normalize(path.join(PUBLIC, url === '/' ? 'index.html' : url));
   if (!file.startsWith(PUBLIC + path.sep)) { res.writeHead(403); return res.end(); }

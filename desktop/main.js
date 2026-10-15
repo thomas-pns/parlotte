@@ -47,15 +47,19 @@ function startServer() {
       clearTimeout(timer);
       const wasReady = !!serverInfo; serverProc = null; serverInfo = null; updateTray();
       if (!wasReady) reject(new Error(`Le serveur s'est arrêté (code ${code}).\n${log.slice(-800)}`));
-      else if (!quitting) { dialog.showErrorBox('Parlotte', 'Le serveur intégré s\'est arrêté de façon inattendue.\n\n' + log.slice(-800)); showLauncher(); }
+      else if (!quitting && !stopping) { dialog.showErrorBox('Parlotte', 'Le serveur intégré s\'est arrêté de façon inattendue.\n\n' + log.slice(-800)); showLauncher(); }
     });
   });
 }
+// Arrêt voulu (restauration, import) : pas de message « arrêté de façon inattendue ».
+let stopping = false;
 function stopServer() {
   return new Promise(res => {
     if (!serverProc) return res();
-    const p = serverProc; const t = setTimeout(() => { try { p.kill(); } catch {} res(); }, 3000);
-    p.once('exit', () => { clearTimeout(t); res(); });
+    stopping = true;
+    const done = () => { stopping = false; res(); };
+    const p = serverProc; const t = setTimeout(() => { try { p.kill(); } catch {} done(); }, 3000);
+    p.once('exit', () => { clearTimeout(t); setTimeout(done, 0); });
     try { p.send('shutdown'); } catch { p.kill(); }
   });
 }
@@ -219,6 +223,45 @@ function showAddresses() {
     detail: `${list || '(aucun réseau détecté)'}\n\nSur ton PC : http://localhost:${serverInfo.port}\n\nEmpreinte du certificat (pour vérifier) :\n${serverInfo.fingerprint}\n\nDans l'app Parlotte, ils choisissent « Rejoindre » et collent l'adresse. Dans un navigateur, ils acceptent l'avertissement de sécurité la première fois.`,
   }).then(r => { if (r.response === 0 && list) clipboard.writeText(list.split('\n')[0]); });
 }
+// ---------------------------------------------------------------- Sauvegardes (faites par le serveur toutes les 6 h)
+const BACKUP_DIR = path.join(DATA_DIR, 'sauvegardes');
+function listBackups() {
+  try { return fs.readdirSync(BACKUP_DIR).filter(f => /^data-.*\.json$/.test(f)).sort().reverse(); } catch { return []; }
+}
+function backupLabel(f) {
+  const m = f.match(/data-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})/); if (!m) return f;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+  return d.toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function backupNow() {
+  const src = path.join(DATA_DIR, 'data.json'); if (!fs.existsSync(src)) return null;
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const name = `data-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`;
+  fs.copyFileSync(src, path.join(BACKUP_DIR, name)); return name;
+}
+async function restoreBackup(file) {
+  const { response } = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Annuler', 'Restaurer'], defaultId: 0, cancelId: 0, noLink: true,
+    title: 'Parlotte — restaurer une sauvegarde', message: `Revenir à la sauvegarde du ${backupLabel(file)} ?`,
+    detail: 'Tout ce qui a été fait depuis (messages, comptes, serveurs) sera remplacé. L\'état actuel est gardé dans une sauvegarde au cas où.' });
+  if (response !== 1) return;
+  const hosting = !!serverProc;
+  await stopServer(); serverProc = null; serverInfo = null;
+  const cur = path.join(DATA_DIR, 'data.json');
+  if (fs.existsSync(cur)) fs.copyFileSync(cur, path.join(BACKUP_DIR, `data-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}-avant-restauration.json`));
+  fs.copyFileSync(path.join(BACKUP_DIR, file), cur);
+  if (hosting) await openHost();
+  new Notification({ title: 'Parlotte', body: `Sauvegarde du ${backupLabel(file)} restaurée ✔` }).show();
+}
+function backupMenu() {
+  const list = listBackups().slice(0, 15);
+  return [
+    { label: 'Faire une sauvegarde maintenant', click: () => { const n = backupNow(); new Notification({ title: 'Parlotte', body: n ? 'Sauvegarde faite ✔' : 'Rien à sauvegarder pour l\'instant' }).show(); updateTray(); } },
+    { label: 'Ouvrir le dossier des sauvegardes', click: () => { fs.mkdirSync(BACKUP_DIR, { recursive: true }); shell.openPath(BACKUP_DIR); } },
+    { type: 'separator' },
+    ...(list.length ? list.map(f => ({ label: `Restaurer : ${backupLabel(f)}${/avant-restauration/.test(f) ? ' (avant restauration)' : ''}`, click: () => restoreBackup(f) }))
+      : [{ label: 'Aucune sauvegarde pour l\'instant', enabled: false }]),
+  ];
+}
 function updateTray() {
   if (!tray) return;
   const login = app.getLoginItemSettings().openAtLogin;
@@ -228,6 +271,7 @@ function updateTray() {
     ...(update ? [{ label: `⬆️ Installer la mise à jour ${update.version}`, click: () => installUpdate() }] : []),
     { type: 'separator' },
     ...(serverInfo ? [{ label: '📡 Adresses pour tes amis…', click: showAddresses }] : []),
+    ...(serverInfo || fs.existsSync(path.join(DATA_DIR, 'data.json')) ? [{ label: '💾 Sauvegardes', submenu: backupMenu() }] : []),
     { label: 'Changer de serveur…', click: () => { win.show(); showLauncher(); } },
     { type: 'separator' },
     { label: 'Lancer au démarrage de Windows', type: 'checkbox', checked: login, click: m => { app.setLoginItemSettings({ openAtLogin: m.checked, args: ['--hidden'] }); } },
@@ -271,6 +315,9 @@ ipcMain.handle('launcher:import', async () => {
 ipcMain.on('launcher:host', () => openHost());
 ipcMain.on('launcher:join', (e, url) => openJoin(url));
 ipcMain.on('app:launcher', () => showLauncher());
+ipcMain.handle('app:backups', () => listBackups().slice(0, 15).map(f => ({ file: f, label: backupLabel(f) })));
+ipcMain.handle('app:backupNow', () => { const n = backupNow(); updateTray(); return n; });
+ipcMain.on('app:restore', (e, file) => { if (listBackups().includes(String(file))) restoreBackup(String(file)); });
 ipcMain.on('app:addresses', () => showAddresses());
 ipcMain.handle('app:info', () => ({ hosting: !!serverInfo, addresses: addressesText().split('\n').filter(Boolean), version: app.getVersion(), showGame: config.showGame }));
 ipcMain.handle('app:idle', () => powerMonitor.getSystemIdleTime());

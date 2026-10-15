@@ -42,6 +42,12 @@ entre eux : utilise un partage de connexion ou le wifi de la maison.
 | 🧭 **Deux espaces** | **Potes** (façon messages privés : bulles, « Vu », double-clic = ❤️, groupes, notes au-dessus des avatars) et **Serveurs** (communautés, salons, rôles) — plus **Activité** (invitations, mentions, j'aime) |
 | 📸 **Stories** | appareil photo intégré (appui = photo, maintien = vidéo 15 s) ou galerie, texte et sondage à placer, visibles 24 h par tes potes, « Vu par », cœurs, réponses en message privé |
 | 🎨 **Serveurs à ton image** | bannière, icône, couleur et description du serveur, avec aperçu en direct dans les paramètres |
+| 🪪 **Profils** | bannière, couleurs, pronoms, « À propos », À la une, potes et serveurs en commun ; carte au clic et profil complet |
+| 💾 **Souvenirs** | après une photo/vidéo : la garder pour soi, l'enregistrer, l'envoyer à des potes ou la mettre en story |
+| 📅 **Événements** | « Soirée Krunker samedi 21 h » : qui vient, rappel 15 min avant, visibles sur la carte du serveur |
+| ⭕ **Morpion** | une partie dans n'importe quelle conversation (menu ＋) |
+| 📞 **Écran d'appel** | plein écran sur téléphone, grands avatars qui s'illuminent, vidéos et gros boutons |
+| 🛟 **Sauvegardes** | copie automatique toutes les 6 h quand tu héberges, restauration en un clic (icône de la barre des tâches ou Paramètres) |
 | 💬 **Discussion** | serveurs, salons, fils de discussion, messages privés et groupes, invitations d'amis sur un serveur, réponses, réactions, épinglés, mentions `@`, `@everyone` |
 | 🎙️ **Vocal & vidéo** | salons vocaux, appels privés, caméra, partage d'écran, messages vocaux |
 | 🎵 **Vocal+** | soundboard (8 sons intégrés + sons perso par serveur), appuyer pour parler, sensibilité du micro, suppression du bruit, choix du micro et de la sortie, volume par personne |
@@ -80,3 +86,7 @@ desktop/    application de bureau Electron (héberger / rejoindre, intégrations
 - Construire pour Windows : `cd desktop && npm run build:win` → `desktop/dist/win-unpacked/` (à zipper).
 
 Licence MIT.
+
+## Crédits
+
+Les messages vocaux sont convertis en MP3 dans le navigateur avec [lamejs](https://github.com/zhuker/lamejs) (LGPL, basé sur [LAME](https://lame.sourceforge.io)), fourni tel quel dans `server/public/vendor/`.
