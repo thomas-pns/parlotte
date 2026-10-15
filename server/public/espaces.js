@@ -88,7 +88,8 @@ $('#rail').addEventListener('click', e => {
   if (k === 'potes') { st.view.friendsOpen = false; const last = st.dms.find(c => c.id === st.lastDm); openChannel('@me', !mobile() && last ? last.id : null); }
   if (k === 'activity') { openChannel('@activity', null); setTimeout(() => request('activitySeen').catch(() => {}), 1500); }
   if (k === 'servers') {
-    if (mobile()) return openChannel('@servers', null);
+    // Petit écran (ou téléphone) : un 2e clic sur « Serveurs » revient à la liste des serveurs
+    if (mobile() || (matchMedia('(max-width:1100px)').matches && space() === 'servers' && server())) return openChannel('@servers', null);
     const s = st.servers.find(x => x.id === st.lastServer) || st.servers[0];
     if (!s) return openChannel('@servers', null);
     openChannel(s.id, s.channels.some(c => c.id === st.lastChanOf?.[s.id]) ? st.lastChanOf[s.id] : firstText(s));
@@ -464,4 +465,23 @@ $('#invite-dlg').addEventListener('click', e => {
   set('#pins', ICON.pin, 'Messages épinglés'); set('#threads-btn', ICON.thread, 'Fils de discussion');
   set('#call', ICON.phone, 'Appel vocal'); set('#vcall', ICON.video, 'Appel vidéo'); set('#toggle-members', ICON.users, 'Afficher le panneau');
   addEventListener('resize', () => { if (st.me) layoutSpace(); });
+})();
+
+// ---------------------------------------------------------------- Panneaux de droite : un seul à la fois
+// (épinglés / fils / recherche d'un côté, membres de l'autre) ; en fenêtre étroite ils s'ouvrent par-dessus.
+(() => {
+  const res = $('#results'), body = document.body;
+  const sync = () => { body.classList.toggle('res-open', !res.hidden); if (!res.hidden) body.classList.remove('members-open'); };
+  new MutationObserver(sync).observe(res, { attributes: true, attributeFilter: ['hidden'] });
+  sync();
+  $('#toggle-members').onclick = () => {
+    const narrow = matchMedia('(max-width:1100px)').matches;
+    if (!res.hidden) { res.hidden = true; $('#members').classList.remove('hide'); if (narrow) body.classList.add('members-open'); return; }
+    if (narrow) body.classList.toggle('members-open');
+    else $('#members').classList.toggle('hide');
+  };
+  document.addEventListener('click', e => {
+    if (!body.classList.contains('members-open') || e.target.closest('#members,#toggle-members,#card')) return;
+    body.classList.remove('members-open');
+  });
 })();

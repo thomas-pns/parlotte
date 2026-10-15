@@ -663,3 +663,27 @@ body.space-activity #chan-title{font-size:22px;font-weight:800}
 @media (min-width:701px) and (max-width:1380px){body.space-servers #members{width:210px}body.space-servers #servers{width:220px}body.space-servers #sidebar{width:220px}#q{width:120px}#q:focus{width:180px}}
 #chan-topic{min-width:60px}
 #thread-bar{display:flex;align-items:center;gap:14px;padding:8px 16px;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)}#thread-bar[hidden]{display:none}#thread-bar span{flex:1}
+
+/* ---------- 1.2.1 : panneaux, défilement, messages vocaux ---------- */
+*{scrollbar-width:thin;scrollbar-color:var(--btn) transparent}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--btn);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background-color:var(--muted)}::-webkit-scrollbar-corner{background:transparent}
+#view{overflow-x:hidden}
+.text{overflow-wrap:anywhere}
+#app,#chat,#sidebar,#servers,#members,#results{overflow-x:hidden}
+body.res-open #members{display:none!important}
+.vnote{width:260px;max-width:100%;box-sizing:border-box}
+.vwave i{flex:1 0 2px;background:#6A6478}.vwave i.played{background:var(--coral)}
+.vplay{background:var(--coral);color:var(--on-coral)}
+@media (min-width:701px) and (max-width:1100px){
+  body.space-servers:not(.no-server) #servers{display:none}
+  #results{position:fixed;top:0;right:0;bottom:0;width:min(380px,92vw);z-index:35;box-shadow:-16px 0 40px #0009;border-left:1px solid var(--border)}
+  body.members-open #members{display:block!important;position:fixed;top:0;right:0;bottom:0;width:280px;z-index:34;box-shadow:-16px 0 40px #0009;overflow-y:auto}
+}
+@media (max-width:700px){
+  #results:not([hidden]){display:flex!important;position:fixed;inset:0;z-index:40;width:auto}
+  body.members-open #members{display:block!important;position:fixed;top:56px;left:0;right:0;bottom:0;width:auto!important;z-index:39;overflow-y:auto}
+}
+.vnote{width:min(240px,62vw)}.vtime{flex:none;min-width:30px;text-align:right}
+.vwave{min-width:0;overflow:hidden;gap:1.5px}.vwave i{flex:1 1 0;min-width:1px}
