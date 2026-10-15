@@ -1,6 +1,6 @@
 // Service worker de Parlotte : garde l'interface en cache pour qu'elle s'ouvre vite
 // (les messages, eux, arrivent toujours en direct par le serveur).
-const CACHE = 'parlotte-v10';
+const CACHE = 'parlotte-v11';
 const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/search.js', '/voix.js', '/presence.js', '/espaces.js', '/stories.js', '/reglages.js', '/profils.js', '/evenements.js', '/appels.js', '/nav16.js', '/parametres.js', '/media16.js', '/vendor/qrcode.js', '/push16.js', '/mobile.js', '/fonts/figtree-latin-wght-normal.woff2', '/fonts/bricolage-grotesque-latin-wght-normal.woff2', '/manifest.webmanifest', '/icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

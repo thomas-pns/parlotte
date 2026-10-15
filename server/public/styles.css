@@ -1493,3 +1493,19 @@ button,.chip,.conv,.dispo,.srv-card{-webkit-tap-highlight-color:transparent}
 .ib-x{width:30px;height:30px;border-radius:15px;background:var(--deep);flex:none}
 body.has-chan #install-bar{display:none}
 #input::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 1.6.1 : boutons fermer, « Mon compte » sur téléphone */
+.set-nav-head{display:none}
+.dlg-x{position:absolute;top:12px;right:12px;width:36px;height:36px;border-radius:18px;background:var(--deep);color:var(--text);display:grid;place-items:center;z-index:5;transition:transform .2s}
+.dlg-x:hover{transform:rotate(90deg)}
+@media (max-width:700px){
+  .set-nav-head{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 8px 10px}
+  .set-nav-head h2{margin:0;font-family:var(--display);font-size:26px}
+  .set-x{width:40px;height:40px;border-radius:20px;border:2px solid var(--btn);display:grid;place-items:center;color:var(--text)}
+  .set-me{padding-top:4px}
+  .acc-id{flex-direction:column;align-items:flex-start;gap:8px;margin-top:-42px}
+  .acc-id>div{padding-bottom:0}.acc-id b{font-size:22px}
+  .acc-id .pill-btn{align-self:stretch;text-align:center;justify-content:center;margin-bottom:0}
+  .acc-row{flex-wrap:wrap}.acc-row .pill-btn{margin-left:auto}
+  .acc-dev{flex-direction:column;align-items:stretch;text-align:center}
+  .acc-pass .primary{align-self:stretch}
+}

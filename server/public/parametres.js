@@ -133,3 +133,24 @@ $('#srv-dlg').addEventListener('click', e => {
   if (!e.target.closest('[data-stab]')) return;
   setTimeout(() => { const b = $('#srv-body'); b.classList.remove('pane-in'); void b.offsetWidth; b.classList.add('pane-in'); }, 0);
 });
+
+// ---------------------------------------------------------------- 1.6.1 : toujours un moyen de fermer
+// Paramètres sur téléphone : titre + bouton fermer au-dessus de la liste des catégories
+const _openSettings161 = openSettings;
+openSettings = function () {
+  _openSettings161();
+  const nav = $('#settings-body .set-nav-in');
+  if (nav && !nav.querySelector('.set-nav-head')) nav.insertAdjacentHTML('afterbegin', `<div class="set-nav-head"><h2>Paramètres</h2><button class="set-x" data-set-x aria-label="Fermer">${SETI.close}</button></div>`);
+};
+$('#settings-dlg').addEventListener('click', e => { if (e.target.closest('[data-set-x]')) { e.stopImmediatePropagation(); closeSettings(); } }, true);
+// Toute fenêtre qui n'a pas de bouton pour se fermer en reçoit un (en haut à droite)
+const CLOSERS = '[id$="close"],[id$="-x"],.close,[data-close],[data-cancel],.dlg-x,.set-x,.set-close,#srv-close,button[value="cancel"]';
+function ensureCloser(d) {
+  if (!d.open || d.id === 'qs' || d.querySelector('.dlg-x')) return;
+  const has = [...d.querySelectorAll(CLOSERS + ',button')].some(b => b.matches(CLOSERS) || /^(✕|×|Fermer|Annuler|Retour)$/.test(b.textContent.trim()));
+  if (has) return;
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'dlg-x'; b.setAttribute('aria-label', 'Fermer'); b.innerHTML = SETI.close;
+  b.onclick = () => d.close(); d.prepend(b);
+}
+new MutationObserver(ms => ms.forEach(m => m.target.tagName === 'DIALOG' && ensureCloser(m.target)))
+  .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
