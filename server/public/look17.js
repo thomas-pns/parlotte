@@ -95,7 +95,15 @@ renderServerCards = function () {
   const box = $('#servers');
   const icons = st.servers.map(s => { const u = unreadIn(s.channels);
     return `<button class="fi-srv" data-srv="${s.id}" aria-label="${esc(s.name)}">${srvTileHTML(s)}${u ? `<span class="fi-badge">${u > 99 ? '99+' : u}</span>` : ''}<small>${esc(s.name)}</small></button>`; }).join('');
-  const cards = st.servers.map(s => {
+  const cards = st.servers.map(feedCardHTML).join('');
+  box.innerHTML = `<header class="col-head"><h1>Serveurs</h1><span class="col-acts"><button id="srv-add-menu" class="round-btn accent" title="Créer ou rejoindre un serveur" aria-label="Créer ou rejoindre un serveur">${LI.plus}</button></span></header>
+    ${st.servers.length ? `<div class="feed-icons">${icons}</div>` : ''}
+    <div class="feed">${cards || '<p class="small pad">Aucun serveur pour l\'instant.</p>'}
+      <button class="srv-add-card" data-srv-add>${LI.plus}<span><b>Ajouter un serveur</b><small>Crée le tien ou rejoins tes potes avec un code</small></span></button></div>`;
+};
+// Une carte du « fil » (téléphone, et page des serveurs sur PC)
+function feedCardHTML(s) {
+  {
     const u = unreadIn(s.channels), online = s.members.filter(m => user(m).status !== 'offline').length;
     const vch = s.channels.find(c => c.type === 'voice' && (st.voice[c.id] || []).length);
     const ev = typeof upcoming === 'function' ? upcoming(s)[0] : null;
@@ -106,14 +114,10 @@ renderServerCards = function () {
         <div class="fc-id">${srvTileHTML(s)}<span class="fc-name"><b>${esc(s.name)}</b><small>${s.members.length} membre${s.members.length > 1 ? 's' : ''} · ${online} en ligne</small></span>${u ? `<span class="fc-new">${u > 99 ? '99+' : u} nouveau${u > 1 ? 'x' : ''}</span>` : ''}</div>
         ${vch ? `<div class="fc-voice"><i class="vc-dot"></i><span><b>${esc(vch.name)} · en direct</b><small>${esc(st.voice[vch.id].map(m => user(m.id).name).join(', '))}</small></span><button class="vb-join" data-feed-voice="${vch.id}" data-feed-srv="${s.id}">Rejoindre</button></div>` : ''}
         ${ev ? (() => { const d = new Date(ev.start), md = MONTH_DAY(d); return `<div class="fc-ev"><span class="evm-cal"><small>${esc(md.wd)}</small><b>${md.day}</b></span><span><b>${esc(ev.title)}</b><small>${esc(d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', ' h '))}</small></span></div>`; })() : ''}
-        ${last.length ? `<div class="fc-last">${last.map(c => { const p = st.previews[c.id]; return `<div><span class="fc-ch"># ${esc(c.name)}</span> <b>${esc(user(p.a).name)}</b> : ${esc(p.x || '')}</div>`; }).join('')}</div>` : ''}
+        ${last.length ? `<div class="fc-last">${last.map(c => { const p = st.previews[c.id]; return `<div><span class="fc-ch"># ${esc(c.name)}</span> <b>${esc(user(p.a).name)}</b> : ${esc((p.x || '').replace(/\*\*|__|\|\||~~|`/g, ''))}</div>`; }).join('')}</div>` : ''}
       </div></article>`;
-  }).join('');
-  box.innerHTML = `<header class="col-head"><h1>Serveurs</h1><span class="col-acts"><button id="srv-add-menu" class="round-btn accent" title="Créer ou rejoindre un serveur" aria-label="Créer ou rejoindre un serveur">${LI.plus}</button></span></header>
-    ${st.servers.length ? `<div class="feed-icons">${icons}</div>` : ''}
-    <div class="feed">${cards || '<p class="small pad">Aucun serveur pour l\'instant.</p>'}
-      <button class="srv-add-card" data-srv-add>${LI.plus}<span><b>Ajouter un serveur</b><small>Crée le tien ou rejoins tes potes avec un code</small></span></button></div>`;
-};
+  }
+}
 document.addEventListener('click', e => {
   const v = e.target.closest('[data-feed-voice]'); if (!v) return;
   e.preventDefault(); e.stopPropagation();

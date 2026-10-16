@@ -62,6 +62,9 @@ entre eux : utilise un partage de connexion ou le wifi de la maison.
 | 🎮 **Proposer une partie** | bouton manette dans les conversations : « Krunker ce soir 21 h ? », Je viens / Pas dispo, ou un morpion direct |
 | 🔕 **Sourdine** | couper les notifications d'un salon, d'une conversation ou d'un serveur (1 h, 8 h, 24 h, toujours) |
 | 1️⃣ **Vue unique** | dans les messages privés, une photo qui ne peut être ouverte qu'une fois |
+| 🗂️ **Catégories** | range les salons d'un serveur dans des catégories repliables (Jeux, Infos…) |
+| 🎨 **Thèmes de conversation** | fond et couleur des bulles en privé (Coucher de soleil, Océan, Nuit étoilée…) |
+| 📷 **Filtres photo** | N&B, chaud, froid, vintage, vif… directement dans l'appareil photo |
 | 🛟 **Sauvegardes** | copie automatique toutes les 6 h quand tu héberges, restauration en un clic (icône de la barre des tâches ou Paramètres) |
 | 💬 **Discussion** | serveurs, salons, fils de discussion, messages privés et groupes, invitations d'amis sur un serveur, réponses, réactions, épinglés, mentions `@`, `@everyone` |
 | 🎙️ **Vocal & vidéo** | salons vocaux, appels privés, caméra, partage d'écran, messages vocaux |

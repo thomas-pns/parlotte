@@ -144,7 +144,7 @@ openSettings = function () {
 };
 $('#settings-dlg').addEventListener('click', e => { if (e.target.closest('[data-set-x]')) { e.stopImmediatePropagation(); closeSettings(); } }, true);
 // Toute fenêtre qui n'a pas de bouton pour se fermer en reçoit un (en haut à droite)
-const CLOSERS = '[id$="close"],[id$="-x"],.close,[data-close],[data-cancel],.dlg-x,.set-x,.set-close,#srv-close,button[value="cancel"]';
+const CLOSERS = '[id$="close"],[id$="-x"],.close,[data-close],[data-cancel],.dlg-x,.set-x,.set-close,#srv-close,button[value="cancel"],.ev-x,[data-ev-close],[data-ev-back],[aria-label="Fermer"],[aria-label="Retour"]';
 function ensureCloser(d) {
   if (!d.open || d.id === 'qs' || d.querySelector('.dlg-x')) return;
   const has = [...d.querySelectorAll(CLOSERS + ',button')].some(b => b.matches(CLOSERS) || /^(✕|×|Fermer|Annuler|Retour)$/.test(b.textContent.trim()));

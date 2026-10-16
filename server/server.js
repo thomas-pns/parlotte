@@ -170,7 +170,7 @@ function bootstrap(uid) {
       invite: my & P.INVITE ? s.invite : null, bans: my & P.BAN ? s.bans : [],
       channels: s.channels.map(cid => db.channels[cid]).filter(c => c && canAccess(uid, c)).map(c => ({ ...c, perms: channelPerms(c, uid) })),
       threads: threadsOf(s).filter(t => canAccess(uid, t)).map(t => ({ ...t, perms: channelPerms(t, uid) })),
-      emojis: (s.emojis || []).map(publicEmoji), sounds: (s.sounds || []).map(publicSound), events: eventsOf(s.id) };
+      emojis: (s.emojis || []).map(publicEmoji), sounds: (s.sounds || []).map(publicSound), events: eventsOf(s.id), categories: s.categories || [] };
   });
   const dms = dmsOf(uid);
   const userIds = new Set([uid]);
@@ -533,21 +533,57 @@ const handlers = {
     removeMember(s, ws.uid);
     save(); refresh([...s.members, ws.uid]);
   },
-  deleteServer(ws, { serverId }) {
+  deleteServer(ws, { serverId, confirmName }) {
     const s = db.servers[serverId]; if (!s || s.owner !== ws.uid) throw new Error('Seul le propriétaire peut supprimer le serveur');
+    if (confirmName !== undefined && String(confirmName).trim() !== s.name) throw new Error('Le nom ne correspond pas');
     const members = s.members;
     const all = [...s.channels, ...threadsOf(s).map(t => t.id)];
     db.messages = db.messages.filter(m => !all.includes(m.channel_id));
     all.forEach(c => delete db.channels[c]); delete db.servers[serverId];
     save(); refresh(members);
   },
-  createChannel(ws, { serverId, name, type }) {
+  createChannel(ws, { serverId, name, type, categoryId }) {
     const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_CHANNELS, 'Il faut la permission « Gérer les salons »');
     const voice = type === 'voice';
     name = voice ? clean(name, 30) : clean(name, 30).toLowerCase().replace(/\s+/g, '-'); if (!name) throw new Error('Nom de salon vide');
-    const c = createChannel(serverId, name, voice ? 'voice' : 'text'); save(); refresh(s.members);
+    const c = createChannel(serverId, name, voice ? 'voice' : 'text');
+    if (categoryId && (s.categories || []).some(k => k.id === categoryId)) c.category = categoryId;
+    save(); refresh(s.members);
     if (voice) return;
     return { t: 'opened', server: serverId, channel: c.id };
+  },
+  // --- Catégories de salons (1.8)
+  createCategory(ws, { serverId, name }) {
+    const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_CHANNELS, 'Il faut la permission « Gérer les salons »');
+    const n = clean(name, 30); if (!n) throw new Error('Donne un nom à la catégorie');
+    s.categories = [...(s.categories || []), { id: id(), name: n }].slice(0, 30); save(); refresh(s.members);
+  },
+  updateCategory(ws, { serverId, categoryId, name, dir }) {
+    const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_CHANNELS, 'Il faut la permission « Gérer les salons »');
+    const list = s.categories || [], i = list.findIndex(k => k.id === categoryId); if (i < 0) throw new Error('Catégorie introuvable');
+    if (name !== undefined) { const n = clean(name, 30); if (!n) throw new Error('Donne un nom à la catégorie'); list[i].name = n; }
+    if (dir) { const j = i + (dir < 0 ? -1 : 1); if (j >= 0 && j < list.length) [list[i], list[j]] = [list[j], list[i]]; }
+    save(); refresh(s.members);
+  },
+  deleteCategory(ws, { serverId, categoryId }) {
+    const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_CHANNELS, 'Il faut la permission « Gérer les salons »');
+    s.categories = (s.categories || []).filter(k => k.id !== categoryId);
+    s.channels.forEach(cid => { const c = db.channels[cid]; if (c?.category === categoryId) delete c.category; }); // les salons restent, sans catégorie
+    save(); refresh(s.members);
+  },
+  moveChannel(ws, { channelId, categoryId, dir }) {
+    const ch = db.channels[channelId], s = ch && db.servers[ch.server_id]; if (!s) throw new Error('Salon introuvable');
+    need(ws.uid, ch, P.MANAGE_CHANNELS, 'Il faut la permission « Gérer les salons »');
+    if (categoryId !== undefined) {
+      if (categoryId && !(s.categories || []).some(k => k.id === categoryId)) throw new Error('Catégorie introuvable');
+      if (categoryId) ch.category = categoryId; else delete ch.category;
+    }
+    if (dir) { // échange avec le salon voisin du même groupe (même catégorie)
+      const same = s.channels.filter(c => (db.channels[c]?.category || null) === (ch.category || null));
+      const k = same.indexOf(channelId), other = same[k + (dir < 0 ? -1 : 1)];
+      if (other) { const a = s.channels.indexOf(channelId), b = s.channels.indexOf(other); [s.channels[a], s.channels[b]] = [s.channels[b], s.channels[a]]; }
+    }
+    save(); refresh(s.members);
   },
   newInvite(ws, { serverId }) {
     const s = db.servers[serverId]; needServer(ws.uid, s, P.MANAGE_SERVER);
@@ -614,6 +650,16 @@ const handlers = {
     const c = db.channels[channelId]; if (!c?.group || !c.members.includes(ws.uid)) throw new Error('Groupe introuvable');
     c.name = clean(name, 40);
     const m = systemMessage(c.id, c.name ? `**${db.users[ws.uid].name}** a renommé le groupe en **${c.name}**` : `**${db.users[ws.uid].name}** a retiré le nom du groupe`);
+    save(); refresh(c.members); broadcast(c.members, { t: 'message', message: m });
+  },
+  // --- Thème de conversation (1.8), façon Instagram
+  setChatTheme(ws, { channelId, theme }) {
+    const c = db.channels[channelId]; if (c?.type !== 'dm' || !c.members.includes(ws.uid)) throw new Error('Conversation introuvable');
+    const THEMES = { '': 'Par défaut', sunset: 'Coucher de soleil', ocean: 'Océan', forest: 'Forêt', candy: 'Bonbon', night: 'Nuit étoilée', lava: 'Lave', mint: 'Menthe' };
+    const t = String(theme || ''); if (!(t in THEMES)) throw new Error('Thème inconnu');
+    if ((c.theme || '') === t) return;
+    if (t) c.theme = t; else delete c.theme;
+    const m = systemMessage(c.id, `**${db.users[ws.uid].name}** a changé le thème : **${THEMES[t]}**`);
     save(); refresh(c.members); broadcast(c.members, { t: 'message', message: m });
   },
   leaveGroup(ws, { channelId }) {

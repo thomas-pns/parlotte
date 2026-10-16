@@ -2,9 +2,20 @@
 // Parlotte — confort sur téléphone : hauteur réelle de l'écran quand le clavier s'ouvre (iPhone).
 (() => {
   const vv = window.visualViewport; if (!vv || !matchMedia('(pointer:coarse)').matches) return;
+  // Bug d'iOS (appli écran d'accueil, iPhone à Dynamic Island) : la zone d'affichage s'arrête avant le bas de
+  // l'écran (il manque la hauteur de la barre d'état). On prend la vraie hauteur de l'écran et on décale tout
+  // ce qui est accroché en bas d'autant (--gapb).
+  const html = document.documentElement;
+  const iosStandalone = () => html.classList.contains('standalone') && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+  const fullH = () => (innerWidth > innerHeight ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height));
   const fit = () => {
-    const r = document.documentElement.style;
-    r.setProperty('--vvh', Math.round(vv.height) + 'px');
+    const r = html.style, kb = vv.height < innerHeight - 100; // clavier ouvert
+    let gap = 0;
+    if (iosStandalone()) { const g = fullH() - innerHeight; if (g > 12 && g < 140) gap = g; }
+    html.classList.toggle('ios-gap', gap > 0);
+    r.setProperty('--gapb', gap + 'px');
+    r.setProperty('--vvh', Math.round(kb ? vv.height : innerHeight + gap) + 'px');
+    r.setProperty('--apph', Math.round(innerHeight + gap) + 'px');
     r.setProperty('--vvt', Math.round(vv.offsetTop) + 'px');
     if (window.scrollY || window.scrollX) window.scrollTo(0, 0); // iOS fait glisser la page (clavier) : on la remet en place
   };
