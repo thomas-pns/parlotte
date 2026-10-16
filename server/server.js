@@ -185,7 +185,7 @@ function bootstrap(uid) {
   const dmIds = new Set(dms.map(c => c.id)), previews = {};
   for (const m of db.messages) if (visible.has(m.channel_id)) {
     lastByChannel[m.channel_id] = m.timestamp;
-    if (dmIds.has(m.channel_id)) previews[m.channel_id] = previewOf(m);
+    previews[m.channel_id] = previewOf(m); // messages privés + salons (fil des serveurs sur téléphone)
   }
   return {
     t: 'bootstrap', P, me: uid, users, servers, dms, lastByChannel, previews, voice: voiceSnapshot(uid),
@@ -322,11 +322,11 @@ function notifyMessage(ch, m) {
   const icon = fileUrl(author.avatar) || '/icon-192.png';
   if (ch.type === 'dm') {
     const title = ch.group ? `${author.name} · ${ch.name || 'Groupe'}` : author.name;
-    ch.members.filter(u => u !== m.author_id && !blocked(u, m.author_id)).forEach(u =>
+    ch.members.filter(u => u !== m.author_id && !blocked(u, m.author_id) && !isMuted(u, ch.id)).forEach(u =>
       notify(u, { title, body: m.story ? `💬 Ta story : ${attLabel({ ...m, story: null })}` : attLabel(m), tag: ch.id, url: `/?c=${ch.id}`, icon }));
   } else {
     const srv = db.servers[serverOfChannel(ch)];
-    (m.mentions || []).filter(u => u !== m.author_id && !blocked(u, m.author_id)).forEach(u =>
+    (m.mentions || []).filter(u => u !== m.author_id && !blocked(u, m.author_id) && !isMuted(u, ch.id, ch.parent_id, srv?.id)).forEach(u =>
       notify(u, { title: `${author.name} · #${ch.name}${srv ? ' · ' + srv.name : ''}`, body: attLabel(m), tag: ch.id, url: `/?c=${ch.id}`, icon }));
   }
 }
@@ -669,7 +669,7 @@ const handlers = {
     const more = list.length > 50; list = list.slice(-50);
     return { t: 'history', channelId, messages: list, more, prepend: !!before };
   },
-  send(ws, { channelId, content, replyTo, attachments, voiceNote }) {
+  send(ws, { channelId, content, replyTo, attachments, voiceNote, once }) {
     const ch = db.channels[channelId]; if (!canAccess(ws.uid, ch)) throw new Error('Salon inaccessible');
     if (ch.type === 'voice') throw new Error('On ne peut pas écrire dans un salon vocal');
     need(ws.uid, ch, P.SEND, 'Tu ne peux pas écrire dans ce salon');
@@ -681,6 +681,11 @@ const handlers = {
       .map(fid => db.uploads[fid]).filter(u => u && u.owner === ws.uid)
       .map(u => ({ id: u.id, url: `/uploads/${u.id}`, filename: u.filename, size: u.size, content_type: u.content_type }));
     if (!content && !files.length) return;
+    // Photo à voir une fois (messages privés) : pas d'adresse dans le message, on la demande au moment de l'ouvrir
+    if (once && ch.type === 'dm' && files.length === 1 && /^image\//.test(files[0].content_type)) {
+      db.uploads[files[0].id].once = true;
+      files[0] = { id: files[0].id, once: true, viewers: [], content_type: files[0].content_type, filename: 'photo', size: files[0].size, url: null };
+    }
     const audience = audienceOf(ch);
     const m = { id: id(), channel_id: channelId, author_id: ws.uid, timestamp: now(), content, reactions: {}, mentions: mentionsIn(content, audience, ws.uid, ch) };
     if (files.length) m.attachments = files;
@@ -1274,6 +1279,47 @@ const handlers = {
     const w = tttWinner(g.board); if (w) { g.winner = w.mark; g.line = w.line; } else g.turn = mark === 'x' ? 'o' : 'x';
     save(); broadcast(audienceOf(ch), { t: 'messageUpdate', message: m });
   },
+  // --- Photo à voir une fois (1.7)
+  viewOnce(ws, { fileId }) {
+    const m = db.messages.find(x => x.attachments?.some(a => a.id === fileId && a.once)), ch = m && db.channels[m.channel_id];
+    if (!m || !canAccess(ws.uid, ch)) throw new Error('Photo introuvable');
+    const a = m.attachments.find(x => x.id === fileId);
+    if (m.author_id === ws.uid) throw new Error('Tu l\'as envoyée pour qu\'elle soit vue une seule fois');
+    if (a.viewers.includes(ws.uid)) throw new Error('Déjà ouverte : elle ne se voit qu\'une fois');
+    a.viewers.push(ws.uid); save(); broadcast(audienceOf(ch), { t: 'messageUpdate', message: m });
+    const k = crypto.randomBytes(16).toString('hex'); onceTokens.set(k, { fid: fileId, exp: Date.now() + 60e3 });
+    return { url: `/uploads/${fileId}?k=${k}` };
+  },
+  // --- Sourdines (1.7)
+  setMute(ws, { target, minutes }) {
+    const u = db.users[ws.uid]; u.mutes = liveMutes(u);
+    if (typeof target !== 'string' || target.length > 40) throw new Error('Cible invalide');
+    if (minutes === null || minutes === undefined || minutes === 0) delete u.mutes[target];
+    else u.mutes[target] = minutes < 0 ? 'always' : new Date(Date.now() + Math.min(Number(minutes), 60 * 24 * 365) * 60e3).toISOString();
+    save(); for (const s2 of online.get(ws.uid) || []) s2.send({ t: 'mutes', mutes: liveMutes(u) });
+    return { mutes: liveMutes(u) };
+  },
+  // --- Proposer une partie (1.7) : « Krunker ce soir 21 h ? » → Je viens / Pas dispo
+  proposePlan(ws, { channelId, title, at }) {
+    const ch = db.channels[channelId]; if (!canAccess(ws.uid, ch) || ch.type === 'voice') throw new Error('Salon inaccessible');
+    need(ws.uid, ch, P.SEND, 'Tu ne peux pas écrire dans ce salon');
+    if (ch.type === 'dm' && !ch.group && blocked(ch.members[0], ch.members[1])) throw new Error('Impossible d\'écrire à cette personne (blocage)');
+    const t = clean(title, 60); if (!t) throw new Error('À quoi on joue ?');
+    const when = at && !isNaN(Date.parse(at)) ? new Date(at).toISOString() : null;
+    const m = { id: id(), channel_id: channelId, author_id: ws.uid, timestamp: now(), content: '', reactions: {}, mentions: [],
+      game: { type: 'plan', title: t, at: when, going: [ws.uid], no: [] } };
+    db.messages.push(m); save(); broadcast(audienceOf(ch), { t: 'message', message: m });
+    const who = db.users[ws.uid].name, label = when ? new Date(when).toLocaleString('fr-FR', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' }) : 'maintenant';
+    const targets = ch.type === 'dm' ? ch.members.filter(u => u !== ws.uid) : [];
+    targets.filter(u => !blocked(u, ws.uid)).forEach(u => notify(u, { title: `🎮 ${who} propose une partie`, body: `${t} · ${label} ?`, tag: ch.id, url: `/?c=${ch.id}` }));
+  },
+  answerPlan(ws, { messageId, answer }) {
+    const m = db.messages.find(x => x.id === messageId), ch = m && db.channels[m.channel_id], g = m?.game;
+    if (g?.type !== 'plan' || !canAccess(ws.uid, ch)) throw new Error('Proposition introuvable');
+    g.going = g.going.filter(u => u !== ws.uid); g.no = g.no.filter(u => u !== ws.uid);
+    if (answer === 'going') g.going.push(ws.uid); else if (answer === 'no') g.no.push(ws.uid);
+    save(); broadcast(audienceOf(ch), { t: 'messageUpdate', message: m });
+  },
   // Recherche côté serveur, comme Discord : on ne cherche que dans les salons accessibles.
   search(ws, { scope, query }) {
     let chans;
@@ -1290,7 +1336,13 @@ const handlers = {
 
 const ownProfile = u => ({ presence: u.presence || 'online', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji,
   statusExpires: statusExpired(u) ? null : u.statusExpires || null, about: u.about || '', avatar: fileUrl(u.avatar), color: u.color,
-  banner: fileUrl(u.banner), bannerId: u.banner || null, accent: u.accent || null, pronouns: u.pronouns || '' });
+  banner: fileUrl(u.banner), bannerId: u.banner || null, accent: u.accent || null, pronouns: u.pronouns || '', mutes: liveMutes(u) });
+// Sourdines : { idSalonOuServeur: date de fin ISO ou 'always' } ; les expirées disparaissent
+function liveMutes(u) {
+  const out = {}; for (const [k, v] of Object.entries(u.mutes || {})) if (v === 'always' || Date.parse(v) > Date.now()) out[k] = v;
+  return out;
+}
+const isMuted = (uid, ...ids) => { const m = liveMutes(db.users[uid] || {}); return ids.some(id => id && m[id]); };
 
 function login(ws, u, token) {
   if (!token) { token = crypto.randomBytes(24).toString('hex'); db.sessions[token] = u.id; save(); }
@@ -1405,9 +1457,14 @@ function handleUpload(req, res) {
 // GET /uploads/<id> : images/vidéos/sons connus affichés, tout le reste téléchargé.
 // Les requêtes « Range » (morceaux de fichier) sont gérées : sans elles, l'iPhone refuse de lire
 // le moindre son ou la moindre vidéo.
+const onceTokens = new Map(); // jeton → { fid, exp } (photos à voir une fois, valables 60 s)
 function serveUpload(req, res, fid) {
   const f = /^[0-9a-f]{24}$/.test(fid) && db.uploads[fid];
   if (!f) { res.writeHead(404); return res.end('Introuvable'); }
+  if (f.once) {
+    const k = new URL(req.url, 'http://x').searchParams.get('k'), t = k && onceTokens.get(k);
+    if (!t || t.fid !== fid || t.exp < Date.now()) { res.writeHead(403); return res.end('Photo à voir une fois'); }
+  }
   const inline = !!INLINE_TYPES[f.content_type], file = path.join(UPLOADS, f.id);
   let size; try { size = fs.statSync(file).size; } catch { res.writeHead(404); return res.end('Introuvable'); }
   const base = {
@@ -1415,7 +1472,7 @@ function serveUpload(req, res, fid) {
     'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.filename)}`,
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'",
-    'Cache-Control': 'private, max-age=31536000, immutable',
+    'Cache-Control': f.once ? 'no-store' : 'private, max-age=31536000, immutable',
     'Accept-Ranges': 'bytes',
   };
   const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');

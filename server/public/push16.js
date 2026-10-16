@@ -111,7 +111,14 @@ function publicCardHTML() {
   if (s.error) return `<div class="pub-card"><p>${esc(s.error)}</p></div>`;
   if (!s.installed) return `<div class="pub-card"><span class="pc-ico">🌍</span><div><b>Tes potes, de partout</b>
     <p>Pour que tes potes se connectent depuis chez eux, installent Parlotte sur leur téléphone et reçoivent les notifications, il faut une vraie adresse sécurisée. <b>Tailscale</b> (gratuit) la donne en un clic.</p>
-    <ol class="pub-steps"><li>Installe Tailscale sur ce PC et crée ton compte (gratuit).</li><li>Reviens ici et touche « Activer ».</li></ol>
+    <ol class="pub-steps">
+      <li><b>Télécharge Tailscale</b> (bouton ci-dessous) et installe-le comme une appli normale.</li>
+      <li>À la fin, une page s'ouvre : <b>connecte-toi</b> avec ton compte Google, Microsoft ou GitHub (c'est gratuit).</li>
+      <li>Une icône Tailscale apparaît près de l'horloge : c'est bon, ce PC est connecté.</li>
+      <li>Reviens ici, touche <b>« J'ai installé, vérifier »</b> puis <b>« Activer »</b>.</li>
+      <li>La première fois, Tailscale demande d'autoriser « Funnel » : un lien s'affiche ici, accepte, puis « Activer » à nouveau.</li>
+    </ol>
+    <p class="small">Tes potes, eux, n'ont rien à installer : ils ouvrent juste l'adresse que tu leur donnes.</p>
     <div class="row"><button class="primary" data-open-safe="https://tailscale.com/download/windows">Télécharger Tailscale</button><button class="pill-btn" id="pub-refresh">J'ai installé, vérifier</button></div></div></div>`;
   if (!s.running) return `<div class="pub-card"><span class="pc-ico">🔑</span><div><b>Connecte-toi à Tailscale</b>
     <p>Ouvre Tailscale (icône près de l'horloge) et connecte-toi, puis reviens ici.</p><div class="row"><button class="pill-btn" id="pub-refresh">Vérifier</button></div></div></div>`;

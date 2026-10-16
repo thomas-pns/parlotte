@@ -59,6 +59,9 @@ entre eux : utilise un partage de connexion ou le wifi de la maison.
 | 🔔 **Notifications push** | sur téléphone, même appli fermée (messages privés, mentions, appels), avec l'accès de partout |
 | 🖼️ **Visionneuse et lecteurs** | photos : zoom, glisser pour fermer, photo suivante ; lecteurs vidéo et son maison |
 | ⚙️ **Paramètres** | rangés par catégories (Mon compte, Profil, Apparence, Notifications, Voix…), changer de pseudo ou de mot de passe, déconnecter les autres appareils |
+| 🎮 **Proposer une partie** | bouton manette dans les conversations : « Krunker ce soir 21 h ? », Je viens / Pas dispo, ou un morpion direct |
+| 🔕 **Sourdine** | couper les notifications d'un salon, d'une conversation ou d'un serveur (1 h, 8 h, 24 h, toujours) |
+| 1️⃣ **Vue unique** | dans les messages privés, une photo qui ne peut être ouverte qu'une fois |
 | 🛟 **Sauvegardes** | copie automatique toutes les 6 h quand tu héberges, restauration en un clic (icône de la barre des tâches ou Paramètres) |
 | 💬 **Discussion** | serveurs, salons, fils de discussion, messages privés et groupes, invitations d'amis sur un serveur, réponses, réactions, épinglés, mentions `@`, `@everyone` |
 | 🎙️ **Vocal & vidéo** | salons vocaux, appels privés, caméra, partage d'écran, messages vocaux |

@@ -13,6 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Parlotte">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>try { if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) document.documentElement.classList.add('standalone'); } catch {}</script>
 <script>try { const p = JSON.parse(localStorage.getItem('parlotte-prefs') || '{}'); document.documentElement.dataset.theme = p.theme || 'dark'; if (p.fs) document.documentElement.style.setProperty('--fs', p.fs + 'px'); } catch {}</script>
 </head>
 <body>
@@ -161,6 +162,8 @@
 <script src="media16.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="push16.js"></script>
+<script src="look17.js"></script>
+<script src="extra17.js"></script>
 <script src="mobile.js"></script>
 </body>
 </html>

@@ -3,10 +3,16 @@
 (() => {
   const vv = window.visualViewport; if (!vv || !matchMedia('(pointer:coarse)').matches) return;
   const fit = () => {
-    document.documentElement.style.setProperty('--vvh', Math.round(vv.height) + 'px');
-    if (vv.offsetTop) window.scrollTo(0, 0); // iOS fait glisser la page sous le clavier : on la remet en place
+    const r = document.documentElement.style;
+    r.setProperty('--vvh', Math.round(vv.height) + 'px');
+    r.setProperty('--vvt', Math.round(vv.offsetTop) + 'px');
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0); // iOS fait glisser la page (clavier) : on la remet en place
   };
-  vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
+  vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); window.addEventListener('orientationchange', () => setTimeout(fit, 300));
+  window.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); }, { passive: true });
+  document.addEventListener('focusout', () => setTimeout(fit, 120)); // clavier fermé : on remesure
+  document.addEventListener('visibilitychange', () => setTimeout(fit, 120));
+  fit();
   document.addEventListener('focusin', e => { if (e.target.id === 'input') setTimeout(() => { const v = $('#view'); if (v) v.scrollTop = v.scrollHeight; }, 300); });
 })();
 

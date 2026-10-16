@@ -86,7 +86,7 @@ document.body.insertAdjacentHTML('beforeend', `<div id="sheet" hidden><div class
 let sheetClose = null;
 function openSheet(html, onClose) {
   const sh = $('#sheet'); clearTimeout(sh._t);
-  sh.querySelector('.sh-body').innerHTML = html; sh.hidden = false; sheetClose = onClose || null; sh._at = Date.now();
+  sh.querySelector('.sh-body').innerHTML = html; sh.hidden = false; sheetClose = onClose || null;
   sh.querySelector('.sh-panel').style.transform = '';
   requestAnimationFrame(() => requestAnimationFrame(() => sh.classList.add('open')));
 }
@@ -208,6 +208,7 @@ function msgSheet(row) {
   openSheet(`<div class="sh-msg">${avatar(u)}<div><b>${esc(u.name)}</b><p>${esc((m.content || previewOf(m).x || '').slice(0, 140))}</p></div></div>
     ${tools.includes('react') ? `<div class="sh-quick">${QUICK.map(q => `<button data-quick="${q}" aria-label="Réagir ${q}">${q}</button>`).join('')}<button data-quick="+" aria-label="Plus d'emojis">${NI.smile}</button></div>` : ''}
     <div class="sh-list">${tools.filter(k => LABEL[k]).map(k => `<button class="sh-item ${k === 'del' ? 'danger' : ''}" data-msg-act="${k}"><span class="sh-ico">${LABEL[k][1]}</span><b>${LABEL[k][0]}</b></button>`).join('')}</div>`);
+  $('#sheet')._at = Date.now(); // seul l'appui long a besoin d'ignorer le doigt qui se relève
   const body = $('#sheet .sh-body');
   body.onclick = e => {
     const q = e.target.closest('[data-quick]');
