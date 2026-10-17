@@ -208,7 +208,9 @@ const statusLine = u => {
 };
 const subline = statusLine;
 const isDnd = () => st.profile?.presence === 'dnd';
-const avatar = (u, withStatus) => `<div class="av" data-user="${esc(u.id)}" style="background:${u.avatar ? `url('${esc(u.avatar)}')` : esc(u.color)}">${u.avatar ? '' : esc(u.name[0].toUpperCase())}${withStatus ? `<span class="st" style="background:${dot[u.status] || dot.offline}"></span>` : ''}</div>`;
+// 2.0 : sans photo, une silhouette moderne sur un dégradé de la couleur de la personne (au lieu de l'initiale)
+const SILHOUETTE = '<svg class="sil" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="15.5" r="7.2"/><path d="M5.5 39c1.2-8.6 7.3-13.4 14.5-13.4S33.3 30.4 34.5 39z"/></svg>';
+const avatar = (u, withStatus) => `<div class="av ${u.avatar ? '' : 'nopic'}" data-user="${esc(u.id)}" style="${u.avatar ? `background:url('${esc(u.avatar)}')` : `--avc:${esc(u.color || '#8E6CFF')}`}">${u.avatar ? '' : SILHOUETTE}${withStatus ? `<span class="st" style="background:${dot[u.status] || dot.offline}"></span>` : ''}</div>`;
 // Mise en forme : ```blocs de code```, > citations, # titres, listes, **gras**, *italique*, __souligné__,
 // ~~barré~~, ||spoiler||, `code`, liens, @mentions, #salons, emojis perso.
 function inlineFormat(raw, ctx) {
@@ -1531,7 +1533,7 @@ function applyPrefs() {
   root.style.setProperty('--fs', (prefs.fs || 15) + 'px');
   document.body.classList.toggle('compact', !!prefs.compact);
   const light = prefs.theme === 'light' || (prefs.theme === 'auto' && matchMedia('(prefers-color-scheme: light)').matches);
-  document.querySelector('meta[name=theme-color]')?.setAttribute('content', light ? '#e3e5e8' : '#1e1f22');
+  setTimeout(() => document.querySelector('meta[name=theme-color]')?.setAttribute('content', getComputedStyle(document.body).backgroundColor || (light ? '#ffffff' : '#14121a')), 0);
 }
 function savePrefs() { store.set('parlotte-prefs', prefs); applyPrefs(); }
 applyPrefs();

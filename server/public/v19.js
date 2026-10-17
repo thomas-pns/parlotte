@@ -11,6 +11,8 @@
 //  • réglage « Écran de l'iPhone » + diagnostic.
 
 window.PARLOTTE_VERSION = window.PARLOTTE_VERSION || '1.9.0';
+// un avatar dans nos feuilles ne doit pas ouvrir la carte de profil en plus (data-user)
+const avatarNU = (u, s) => avatar(u, s).replace(' data-user=', ' data-nouser=');
 const V9 = {
   search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>', 20),
   star: svg('<path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.9l-5.3 2.7 1-5.8-4.2-4.1 5.9-.9z" fill="currentColor"/>', 18),
@@ -60,7 +62,7 @@ function friendSheetHTML(uid) {
   const u = user(uid), friend = st.friends.includes(uid), gs = fgroups();
   const sub = typeof subline === 'function' ? subline(u) : '';
   return `<div class="fsheet" data-fs="${esc(uid)}">
-    <div class="fs-head">${avatar(u, true)}<div><b>${esc(u.name)}</b>${sub ? `<small>${sub}</small>` : ''}</div>${isClose(uid) ? `<span class="fs-close-badge">${V9.star}</span>` : ''}</div>
+    <div class="fs-head">${avatarNU(u, true)}<div><b>${esc(u.name)}</b>${sub ? `<small>${sub}</small>` : ''}</div>${isClose(uid) ? `<span class="fs-close-badge">${V9.star}</span>` : ''}</div>
     <div class="fs-quick">
       <button data-fs-act="profile">${V9.user}<span>Profil</span></button>
       ${friend ? `<button data-fs-act="dm">${V9.msg}<span>Message</span></button>` : ''}
@@ -132,7 +134,7 @@ function editFriendGroup(groupId, addUid) {
     <input id="fg-name" maxlength="30" placeholder="Famille, Potes du foot, Lycée…" value="${esc(g?.name || '')}" autocomplete="off">
     <div class="fg-colors">${FG_COLORS.map(c => `<button type="button" class="fg-c ${c === color ? 'on' : ''}" data-fg-c="${c}" style="background:${c}" aria-label="Couleur ${c}"></button>`).join('')}</div>`}
     <div class="fg-search"><span>${V9.search}</span><input id="fg-q" placeholder="Chercher un pote" autocomplete="off"></div>
-    <div class="fg-list">${friends.map(u => `<label class="fg-pick" data-name="${esc(u.name.toLowerCase())}">${avatar(u, true)}<span>${esc(u.name)}</span><input type="checkbox" value="${esc(u.id)}" ${sel.has(u.id) ? 'checked' : ''}><i>${V9.check}</i></label>`).join('') || '<p class="small">Ajoute d\'abord des potes.</p>'}</div>
+    <div class="fg-list">${friends.map(u => `<label class="fg-pick" data-name="${esc(u.name.toLowerCase())}">${avatarNU(u, true)}<span>${esc(u.name)}</span><input type="checkbox" value="${esc(u.id)}" ${sel.has(u.id) ? 'checked' : ''}><i>${V9.check}</i></label>`).join('') || '<p class="small">Ajoute d\'abord des potes.</p>'}</div>
     <div class="fg-foot">${g && g.id !== 'close' ? `<button type="button" class="pill-btn danger-pill" id="fg-del">${V9.trash}<span>Supprimer</span></button>` : ''}
       <button class="primary" id="fg-ok">${g ? 'Enregistrer' : 'Créer'}</button></div></form>`);
   $('#sheet').classList.add('sh-tall');
@@ -168,7 +170,7 @@ function fillFriendsPane() {
       Personne ne voit dans quelle catégorie tu l'as mis. Astuce : <b>appui long</b> sur un pote pour le ranger.</p>
     <div class="fg-cards">${gs.map(g => `<button class="fg-card" data-fg-edit="${esc(g.id)}" style="--fc:${esc(g.color)}">
       <span class="fg-ic">${g.id === 'close' ? V9.star : V9.tag}</span><span class="fg-tx"><b>${esc(g.name)}</b><small>${g.members.length ? g.members.slice(0, 3).map(u => esc(user(u).name)).join(', ') + (g.members.length > 3 ? ` +${g.members.length - 3}` : '') : 'Personne pour l\'instant'}</small></span>
-      <span class="fg-av">${g.members.slice(0, 3).map(u => avatar(user(u))).join('')}</span>${V9.chev}</button>`).join('')}
+      <span class="fg-av">${g.members.slice(0, 3).map(u => avatarNU(user(u))).join('')}</span>${V9.chev}</button>`).join('')}
       <button class="fg-card add" data-fg-new><span class="fg-ic">${V9.plus}</span><span class="fg-tx"><b>Créer une catégorie</b><small>Jusqu'à 20</small></span></button></div>`;
 }
 const _openSettings19 = openSettings;
@@ -187,7 +189,7 @@ friendsHTML = function () {
   const g = tab.startsWith('g:') && fgroup(tab.slice(2));
   const list = g ? F.filter(u => g.members.includes(u.id)) : tab === 'online' ? F.filter(u => u.status !== 'offline') : F;
   const rows = list.map(u => `<div class="friend frow" data-friend-row="${esc(u.id)}" data-name="${esc(u.name.toLowerCase())}">
-      <span class="fr-av">${avatar(u, true)}${isClose(u.id) ? `<i class="fr-star">${V9.star}</i>` : ''}</span>
+      <span class="fr-av">${avatarNU(u, true)}${isClose(u.id) ? `<i class="fr-star">${V9.star}</i>` : ''}</span>
       <div class="grow"><b>${esc(u.name)}</b><small>${subline(u) || esc(STATUS[u.status] || '')}</small>
         ${groupsOfUser(u.id).filter(x => x.id !== 'close').length ? `<span class="fr-tags">${groupsOfUser(u.id).filter(x => x.id !== 'close').map(x => `<i style="--fc:${esc(x.color)}">${esc(x.name)}</i>`).join('')}</span>` : ''}</div>
       <button class="act fr-btn" data-dm="${u.id}" title="Message" aria-label="Message à ${esc(u.name)}">${V9.msg}</button>
@@ -234,9 +236,9 @@ function fillFinder(raw) {
   const groups = st.dms.filter(c => c.group && (has(groupName(c)) || c.members.some(m => has(user(m).name))));
   const chans = q ? st.servers.flatMap(s => s.channels.filter(c => c.type !== 'voice' && has(c.name)).map(c => ({ s, c }))).slice(0, 8) : [];
   const recent = !q ? st.dms.filter(c => !c.group).sort((a, b) => (st.lastByChannel[b.id] || '').localeCompare(st.lastByChannel[a.id] || '')).slice(0, 8).map(dmOther) : [];
-  const row = u => `<button class="fsr-row" data-fsr-user="${esc(u.id)}">${avatar(u, true)}<span class="fsr-tx"><b>${esc(u.name)}${isClose(u.id) ? ` <i class="fr-star in">${V9.star}</i>` : ''}</b><small>${subline(u) || esc(STATUS[u.status] || '')}</small></span>${V9.msg}</button>`;
+  const row = u => `<button class="fsr-row" data-fsr-user="${esc(u.id)}">${avatarNU(u, true)}<span class="fsr-tx"><b>${esc(u.name)}${isClose(u.id) ? ` <i class="fr-star in">${V9.star}</i>` : ''}</b><small>${subline(u) || esc(STATUS[u.status] || '')}</small></span>${V9.msg}</button>`;
   let html = '';
-  if (recent.length) html += `<h5>Récents</h5><div class="fsr-chips" data-noswipe>${recent.map(u => `<button class="fsr-chip" data-fsr-user="${esc(u.id)}">${avatar(u, true)}<span>${esc(u.name)}</span></button>`).join('')}</div>`;
+  if (recent.length) html += `<h5>Récents</h5><div class="fsr-chips" data-noswipe>${recent.map(u => `<button class="fsr-chip" data-fsr-user="${esc(u.id)}">${avatarNU(u, true)}<span>${esc(u.name)}</span></button>`).join('')}</div>`;
   if (friends.length) html += `<h5>${q ? 'Potes' : 'Tous tes potes'}</h5>` + friends.map(row).join('');
   if (groups.length) html += '<h5>Groupes</h5>' + groups.map(c => `<button class="fsr-row" data-fsr-chan="${esc(c.id)}">${convAvatar(c)}<span class="fsr-tx"><b>${esc(groupName(c))}</b><small>${c.members.length} membres</small></span>${V9.msg}</button>`).join('');
   if (chans.length) html += '<h5>Salons</h5>' + chans.map(({ s, c }) => `<button class="fsr-row" data-fsr-chan="${esc(c.id)}" data-fsr-srv="${esc(s.id)}">${srvTileHTML(s, 'fsr-srv')}<span class="fsr-tx"><b>#${esc(c.name)}</b><small>${esc(s.name)}</small></span>${V9.hash}</button>`).join('');
@@ -327,7 +329,7 @@ function renderPTab() {
     <div class="pt-banner ${me.banner ? 'img' : ''}" style="${bannerStyle(me)}">
       <button class="pt-gear" data-pt="settings" aria-label="Paramètres">${V9.gear}</button></div>
     <div class="pt-id">
-      <button class="pt-av ${mine.length ? (mine.some(x => !x.seen) ? 'story' : 'story seen') : ''}" data-pt="${mine.length ? 'story' : 'camera'}" aria-label="${mine.length ? 'Voir ta story' : 'Créer une story'}">${avatar(me, true)}${mine.length ? '' : `<i class="pt-plus">${V9.plus}</i>`}</button>
+      <button class="pt-av ${mine.length ? (mine.some(x => !x.seen) ? 'story' : 'story seen') : ''}" data-pt="${mine.length ? 'story' : 'camera'}" aria-label="${mine.length ? 'Voir ta story' : 'Créer une story'}">${avatarNU(me, true)}${mine.length ? '' : `<i class="pt-plus">${V9.plus}</i>`}</button>
       <button class="pt-note ${note ? '' : 'empty'}" data-pt="note">${note || 'Ta note…'}</button>
     </div>
     <div class="pt-names"><h2>${esc(me.name)}</h2><small>${esc(me.pronouns || '')}${me.pronouns ? ' · ' : ''}${st.friends.length} pote${st.friends.length > 1 ? 's' : ''}</small></div>
@@ -576,7 +578,7 @@ function fillScreenSetting() {
   const m = typeof iosFitMode === 'function' ? iosFitMode() : 'auto';
   const opts = [['auto', 'Automatique', 'Le réglage normal (conseillé)'], ['ext', 'Descendre jusqu\'en bas', 'Si une bande vide reste sous la barre du bas'], ['screen', 'Hauteur de l\'écran', 'Autre essai si la bande est toujours là']];
   pane.insertAdjacentHTML('beforeend', `<h4>Écran du téléphone</h4><div class="scr-set">
-    ${opts.map(([k, l, s]) => `<label class="scr-opt"><input type="radio" name="scr" value="${k}" ${m === k ? 'checked' : ''}><span><b>${l}</b><small>${s}</small></span></label>`).join('')}
+    <p class="small">Sur iPhone, si une bande vide reste en bas : supprime l'icône Parlotte de l'écran d'accueil puis rajoute-la (Partager → Sur l'écran d'accueil). iOS ne relit le réglage de l'écran qu'à ce moment-là.</p>
     <details class="scr-diag"><summary>${V9.phone} Diagnostic (à m'envoyer en capture)</summary><pre id="scr-diag"></pre></details></div>`);
   diag();
 }

@@ -49,6 +49,8 @@ if (!db.push) { db.push = {}; migrated = true; }
 if (!db.stories) { db.stories = []; migrated = true; }
 if (!db.memories) { db.memories = []; migrated = true; }
 if (!db.events) { db.events = []; migrated = true; }
+if (!db.posts) { db.posts = []; migrated = true; }
+if (!db.settings) { db.settings = {}; migrated = true; }
 for (const s of Object.values(db.servers)) {
   if (!s.channels.some(c => db.channels[c]?.type === 'voice')) {
     migrated = true;
@@ -116,7 +118,8 @@ const activityOf = uid => {
 const fileUrl = fid => (fid && db.uploads[fid] ? `/uploads/${fid}` : null);
 const publicUser = u => ({ id: u.id, name: u.name, color: u.color, status: status(u.id), bot: !!u.bot, created: u.created,
   avatar: fileUrl(u.avatar), about: u.about || '', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji, activity: activityOf(u.id),
-  banner: fileUrl(u.banner), accent: u.accent || null, pronouns: u.pronouns || '', highlights: (u.highlights || []).length });
+  banner: fileUrl(u.banner), accent: u.accent || null, pronouns: u.pronouns || '', highlights: (u.highlights || []).length,
+  notePhoto: u.notePhoto && Date.parse(u.notePhoto.expires) > Date.now() && db.uploads[u.notePhoto.file] ? { url: `/uploads/${u.notePhoto.file}`, kind: u.notePhoto.kind, expires: u.notePhoto.expires } : null });
 const serversOf = uid => Object.values(db.servers).filter(s => s.members.includes(uid));
 const dmsOf = uid => Object.values(db.channels).filter(c => c.type === 'dm' && c.members.includes(uid));
 const roleIdsOf = (s, uid) => [s.id, ...((s.memberRoles || {})[uid] || [])];
@@ -229,7 +232,7 @@ function findStory(uid, storyId) {
 }
 function cleanStickers(list) {
   const num = (v, a, b, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d; };
-  return (Array.isArray(list) ? list : []).slice(0, 8).map(k => {
+  return (Array.isArray(list) ? list : []).slice(0, 12).map(k => {
     const base = { x: num(k?.x, 0, 1, 0.5), y: num(k?.y, 0, 1, 0.5), rot: num(k?.rot, -30, 30, 0) };
     if (k?.type === 'poll') {
       const answers = (Array.isArray(k.answers) ? k.answers : []).map(a => clean(a, 30)).filter(Boolean).slice(0, 4);
@@ -237,9 +240,20 @@ function cleanStickers(list) {
       if (!question || answers.length < 2) return null;
       return { type: 'poll', ...base, question, answers: answers.map((text, i) => ({ id: String(i + 1), text, votes: [] })) };
     }
+    // 2.0 : GIF (GIPHY), heure, lieu, et styles de texte
+    if (k?.type === 'gif') {
+      const url = String(k.url || '');
+      if (!/^https:\/\/(media\d*|i)\.giphy\.com\/[\w\/.\-?=&%]+$/.test(url) || url.length > 400) return null;
+      return { type: 'gif', ...base, url, w: num(k.w, 0.15, 0.95, 0.45), ar: num(k.ar, 0.2, 5, 1) };
+    }
+    const STY = ['classic', 'neon', 'type', 'box', 'strong'];
+    if (k?.type === 'time' || k?.type === 'place') {
+      const text = clean(k.text, k.type === 'time' ? 16 : 40); if (!text) return null;
+      return { type: k.type, ...base, text, style: STY.includes(k.style) ? k.style : 'box', size: num(k.size, 14, 56, 24) };
+    }
     const text = clean(k?.text, 80); if (!text) return null;
     return { type: 'text', ...base, text, color: /^#[0-9a-f]{6}$/i.test(k.color) ? k.color : '#ffffff',
-      bg: /^#[0-9a-f]{6}$/i.test(k.bg) ? k.bg : null, size: num(k.size, 14, 56, 28) };
+      bg: /^#[0-9a-f]{6}$/i.test(k.bg) ? k.bg : null, size: num(k.size, 14, 56, 28), style: STY.includes(k.style) ? k.style : 'classic' };
   }).filter(Boolean);
 }
 // ---------------------------------------------------------------- Souvenirs (photos et vidéos gardées pour soi)
@@ -248,7 +262,7 @@ const memoriesOf = uid => db.memories.filter(m => m.owner === uid && db.uploads[
 const editorStickers = list => cleanStickers(list).map(k => (k.type === 'poll' ? { ...k, answers: k.answers.map(a => a.text) } : k));
 // ---------------------------------------------------------------- À la une (stories gardées sur le profil)
 const highlightStickers = list => list.map(k => (k.type !== 'poll' ? k : { ...k, answers: k.answers.map(a => ({ id: a.id, text: a.text, count: a.votes.length, mine: false })) }));
-const publicHighlights = u => (u.highlights || []).map(h => ({ id: h.id, title: h.title, cover: fileUrl(h.items[0]?.file), coverKind: h.items[0]?.kind,
+const publicHighlights = u => (u.highlights || []).map(h => ({ id: h.id, title: h.title, audience: h.audience || null, cover: fileUrl(h.items[0]?.file), coverKind: h.items[0]?.kind,
   items: h.items.filter(i => db.uploads[i.file]).map(i => ({ id: i.id, url: fileUrl(i.file), kind: i.kind, stickers: highlightStickers(i.stickers || []), created: i.created })) }));
 // ---------------------------------------------------------------- Événements de serveur
 const eventsOf = sid => db.events.filter(e => e.serverId === sid && Date.parse(e.start) > Date.now() - 6 * 3600e3)
@@ -446,6 +460,40 @@ function mentionsIn(text, audience, author, ch) {
     else { const u = audience.find(u => db.users[u]?.name.toLowerCase() === name); if (u) out.add(u); }
   }
   return [...out];
+}
+
+// ---------------------------------------------------------------- 2.0 : publications du profil (façon Instagram, sans fil)
+// Visible par les potes de l'auteur ; on peut réserver une publication (ou tout son profil) à une catégorie d'amis.
+const groupHas = (owner, gid, uid) => (fgroupsOf(db.users[owner]).find(g => g.id === gid)?.members || []).includes(uid);
+function canSeeProfile(uid, owner) {
+  if (uid === owner) return true;
+  if (!friendsOf(owner).includes(uid) || blocked(uid, owner)) return false;
+  const pa = db.users[owner]?.profileAudience; return !pa || groupHas(owner, pa, uid);
+}
+const canSeePost = (uid, p) => p.author === uid || (canSeeProfile(uid, p.author) && (!p.audience || groupHas(p.author, p.audience, uid)));
+const postAudience = p => [p.author, ...friendsOf(p.author)].filter(u => canSeePost(u, p));
+function publicPost(p, uid) {
+  const mine = p.author === uid;
+  return { id: p.id, author: p.author, url: `/uploads/${p.file}`, kind: p.kind, caption: p.caption, created: p.created, stickers: p.stickers || [],
+    audience: mine ? p.audience || null : undefined, allowComments: p.allowComments !== false, hideLikes: !!p.hideLikes,
+    liked: p.likes.includes(uid), likes: mine || !p.hideLikes ? p.likes.length : null, likers: mine ? p.likes.slice(-30) : undefined,
+    comments: p.allowComments === false ? [] : p.comments.slice(-200), ar: p.ar || null };
+}
+function postChanged(p, only) { for (const u of only || postAudience(p)) sendTo(u, { t: 'post', post: publicPost(p, u) }); }
+function findPost(uid, postId) {
+  const p = db.posts.find(x => x.id === postId);
+  if (!p || !canSeePost(uid, p)) throw new Error('Cette publication n\'est plus disponible');
+  return p;
+}
+// GIPHY : la clé reste sur le serveur, les téléphones ne la voient jamais
+function giphy(path, params) {
+  return new Promise((resolve, reject) => {
+    const q = new URLSearchParams({ api_key: db.settings.giphyKey, rating: 'pg-13', lang: 'fr', ...params }).toString();
+    const req = https.get(`https://api.giphy.com/v1/${path}?${q}`, { timeout: 8000 }, res => {
+      let d = ''; res.on('data', c => (d += c)); res.on('end', () => { try { const j = JSON.parse(d); if (res.statusCode >= 400) return reject(new Error(res.statusCode === 401 || res.statusCode === 403 ? 'Clé GIPHY refusée' : 'GIPHY ne répond pas')); resolve(j); } catch { reject(new Error('GIPHY ne répond pas')); } });
+    });
+    req.on('timeout', () => req.destroy(new Error('GIPHY ne répond pas'))); req.on('error', () => reject(new Error('Pas de connexion à GIPHY')));
+  });
 }
 
 const handlers = {
@@ -690,9 +738,118 @@ const handlers = {
     for (const x of db.stories) if (x.author === ws.uid && x.audience === groupId && storyLive(x)) sendTo(userId, on ? { t: 'story', story: publicStory(x, userId) } : { t: 'storyRemoved', id: x.id });
   },
 
+  // --- Publications du profil (2.0)
+  createPost(ws, { fileId, caption, audience, allowComments, hideLikes, stickers, ar }) {
+    const f = db.uploads[fileId];
+    if (!f || f.owner !== ws.uid || !/^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(f.content_type)) throw new Error('Une publication doit être une photo ou une vidéo');
+    if (audience && !fgroupsOf(db.users[ws.uid]).some(g => g.id === audience)) throw new Error('Cette catégorie d\'amis n\'existe plus');
+    if (db.posts.filter(p => p.author === ws.uid).length >= 1000) throw new Error('1000 publications maximum');
+    const p = { id: id(), author: ws.uid, file: f.id, kind: f.content_type.startsWith('video/') ? 'video' : 'image', caption: clean(caption, 1000),
+      audience: audience || null, allowComments: allowComments !== false, hideLikes: !!hideLikes, stickers: cleanStickers(stickers).filter(k => k.type !== 'poll'),
+      ar: Math.max(0.3, Math.min(3, Number(ar) || 0)) || null, created: now(), likes: [], comments: [] };
+    db.posts.push(p); save(); postChanged(p);
+    for (const u of postAudience(p)) if (u !== ws.uid) pushActivity(u, { type: 'post', from: ws.uid, postId: p.id, url: `/uploads/${p.file}`, kind: p.kind, text: excerpt(p.caption, 80) });
+    return { t: 'postCreated', post: publicPost(p, ws.uid) };
+  },
+  getPosts(ws, { userId }) {
+    if (!db.users[userId]) throw new Error('Utilisateur introuvable');
+    if (!canSeeProfile(ws.uid, userId)) return { t: 'posts', userId, hidden: true, posts: [] };
+    return { t: 'posts', userId, posts: db.posts.filter(p => p.author === userId && canSeePost(ws.uid, p)).sort((a, b) => b.created.localeCompare(a.created)).map(p => publicPost(p, ws.uid)) };
+  },
+  updatePost(ws, { postId, caption, audience, allowComments, hideLikes }) {
+    const p = db.posts.find(x => x.id === postId && x.author === ws.uid); if (!p) throw new Error('Publication introuvable');
+    const before = postAudience(p);
+    if (caption !== undefined) p.caption = clean(caption, 1000);
+    if (audience !== undefined) { if (audience && !fgroupsOf(db.users[ws.uid]).some(g => g.id === audience)) throw new Error('Catégorie introuvable'); p.audience = audience || null; }
+    if (allowComments !== undefined) p.allowComments = !!allowComments;
+    if (hideLikes !== undefined) p.hideLikes = !!hideLikes;
+    save(); const after = postAudience(p);
+    for (const u of before) if (!after.includes(u)) sendTo(u, { t: 'postRemoved', id: p.id });
+    postChanged(p); return { t: 'ok' };
+  },
+  deletePost(ws, { postId }) {
+    const p = db.posts.find(x => x.id === postId); if (!p || p.author !== ws.uid) throw new Error('Publication introuvable');
+    const aud = postAudience(p); db.posts = db.posts.filter(x => x !== p); save();
+    broadcast(aud, { t: 'postRemoved', id: p.id });
+  },
+  likePost(ws, { postId, on }) {
+    const p = findPost(ws.uid, postId);
+    const has = p.likes.includes(ws.uid), want = on === undefined ? !has : !!on;
+    if (want === has) return;
+    p.likes = p.likes.filter(u => u !== ws.uid); if (want) p.likes.push(ws.uid);
+    if (want && p.author !== ws.uid && !(db.activity[p.author] || []).some(a => a.type === 'postlike' && a.postId === p.id && a.from === ws.uid))
+      pushActivity(p.author, { type: 'postlike', from: ws.uid, postId: p.id, url: `/uploads/${p.file}`, kind: p.kind });
+    save(); postChanged(p);
+  },
+  commentPost(ws, { postId, text }) {
+    const p = findPost(ws.uid, postId);
+    if (p.allowComments === false) throw new Error('Les commentaires sont désactivés');
+    const t = clean(text, 500); if (!t) throw new Error('Écris un commentaire');
+    if (p.comments.length >= 500) throw new Error('Trop de commentaires sur cette publication');
+    const c = { id: id(), uid: ws.uid, text: t, at: now() }; p.comments.push(c); save(); postChanged(p);
+    if (p.author !== ws.uid) pushActivity(p.author, { type: 'postcomment', from: ws.uid, postId: p.id, url: `/uploads/${p.file}`, kind: p.kind, text: excerpt(t, 80) });
+  },
+  deleteComment(ws, { postId, commentId }) {
+    const p = db.posts.find(x => x.id === postId); if (!p) throw new Error('Publication introuvable');
+    const c = p.comments.find(x => x.id === commentId); if (!c || (c.uid !== ws.uid && p.author !== ws.uid)) throw new Error('Commentaire introuvable');
+    p.comments = p.comments.filter(x => x !== c); save(); postChanged(p);
+  },
+  replyPost(ws, { postId, text }) {
+    const p = findPost(ws.uid, postId);
+    if (p.author === ws.uid) throw new Error('Tu ne peux pas répondre à ta propre publication');
+    const content = clean(text, 2000); if (!content) throw new Error('Écris une réponse');
+    const { channel } = handlers.openDM(ws, { userId: p.author });
+    const ch = db.channels[channel];
+    const m = { id: id(), channel_id: channel, author_id: ws.uid, timestamp: now(), content, reactions: {}, mentions: [],
+      story: { id: p.id, author: p.author, url: `/uploads/${p.file}`, kind: p.kind, post: true } };
+    db.messages.push(m); save();
+    broadcast(audienceOf(ch), { t: 'message', message: m }); notifyMessage(ch, m);
+    return { t: 'ok', channel };
+  },
+  setProfileAudience(ws, { audience }) {
+    const u = db.users[ws.uid];
+    if (audience && !fgroupsOf(u).some(g => g.id === audience)) throw new Error('Catégorie introuvable');
+    u.profileAudience = audience || null; save();
+    sendTo(ws.uid, { t: 'profile', profile: ownProfile(u) });
+    for (const f of friendsOf(ws.uid)) sendTo(f, { t: 'postsReset', userId: ws.uid });
+  },
+  setHighlightAudience(ws, { highlightId, audience }) {
+    const u = db.users[ws.uid], h = (u.highlights || []).find(x => x.id === highlightId); if (!h) throw new Error('« À la une » introuvable');
+    if (audience && !fgroupsOf(u).some(g => g.id === audience)) throw new Error('Catégorie introuvable');
+    h.audience = audience || null; save(); return { t: 'ok' };
+  },
+  // --- Note avec photo (24 h) : s'affiche dans la bulle de ta note
+  setNotePhoto(ws, { fileId, text }) {
+    const u = db.users[ws.uid];
+    if (!fileId) { u.notePhoto = null; save(); presenceChanged(ws.uid); return { t: 'ok' }; }
+    const f = db.uploads[fileId];
+    if (!f || f.owner !== ws.uid || !/^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(f.content_type)) throw new Error('Une note doit être une photo ou une vidéo');
+    const expires = new Date(Date.now() + 24 * 3600e3).toISOString();
+    u.notePhoto = { file: f.id, kind: f.content_type.startsWith('video/') ? 'video' : 'image', expires };
+    if (text !== undefined && String(text).trim()) { u.customStatus = clean(text, 80); u.statusExpires = expires; }
+    save(); sendTo(ws.uid, { t: 'profile', profile: ownProfile(u) }); presenceChanged(ws.uid); return { t: 'ok' };
+  },
+  // --- GIF (2.0)
+  setGiphyKey(ws, { key }) {
+    if (!isHost(ws.uid)) throw new Error('Seul le propriétaire de Parlotte peut régler la clé GIPHY');
+    key = String(key || '').trim(); if (key && !/^[A-Za-z0-9]{20,64}$/.test(key)) throw new Error('Cette clé ne ressemble pas à une clé GIPHY');
+    db.settings.giphyKey = key || null; save();
+    for (const [uid] of online) sendTo(uid, { t: 'profile', profile: ownProfile(db.users[uid]) });
+    return { t: 'ok', on: !!key };
+  },
+  async gifSearch(ws, { q, kind, offset }) {
+    if (!db.settings.giphyKey) throw new Error('Les GIF ne sont pas encore activés (clé GIPHY dans Paramètres → Application)');
+    const type = kind === 'stickers' ? 'stickers' : 'gifs', query = clean(q, 60);
+    const j = await giphy(`${type}/${query ? 'search' : 'trending'}`, { limit: '24', offset: String(Math.max(0, Math.min(500, Number(offset) || 0))), ...(query ? { q: query } : {}) });
+    const pick = (im, k) => im?.[k]?.webp || im?.[k]?.url;
+    return { t: 'gifs', kind: type, q: query, results: (j.data || []).map(g => ({ id: g.id, title: g.title || '', url: pick(g.images, 'fixed_width') || pick(g.images, 'original'),
+      full: pick(g.images, 'downsized_medium') || pick(g.images, 'original') || pick(g.images, 'fixed_width'),
+      w: Number(g.images?.fixed_width?.width) || 200, h: Number(g.images?.fixed_width?.height) || 200 })).filter(g => g.url) };
+  },
+
   setChatTheme(ws, { channelId, theme }) {
     const c = db.channels[channelId]; if (c?.type !== 'dm' || !c.members.includes(ws.uid)) throw new Error('Conversation introuvable');
-    const THEMES = { '': 'Par défaut', sunset: 'Coucher de soleil', ocean: 'Océan', forest: 'Forêt', candy: 'Bonbon', night: 'Nuit étoilée', lava: 'Lave', mint: 'Menthe' };
+    const THEMES = { '': 'Par défaut', night: 'Nuit étoilée', aurora: 'Aurore', sunset: 'Coucher de soleil', ocean: 'Océan', neon: 'Néon', candy: 'Bonbon', forest: 'Forêt', lava: 'Lave', mint: 'Menthe', peach: 'Pêche', sky: 'Ciel', mono: 'Noir & blanc' };
     const t = String(theme || ''); if (!(t in THEMES)) throw new Error('Thème inconnu');
     if ((c.theme || '') === t) return;
     if (t) c.theme = t; else delete c.theme;
@@ -752,7 +909,7 @@ const handlers = {
     const more = list.length > 50; list = list.slice(-50);
     return { t: 'history', channelId, messages: list, more, prepend: !!before };
   },
-  send(ws, { channelId, content, replyTo, attachments, voiceNote, once }) {
+  send(ws, { channelId, content, replyTo, attachments, voiceNote, once, gif }) {
     const ch = db.channels[channelId]; if (!canAccess(ws.uid, ch)) throw new Error('Salon inaccessible');
     if (ch.type === 'voice') throw new Error('On ne peut pas écrire dans un salon vocal');
     need(ws.uid, ch, P.SEND, 'Tu ne peux pas écrire dans ce salon');
@@ -763,6 +920,10 @@ const handlers = {
     const files = (Array.isArray(attachments) ? attachments : []).slice(0, 10)
       .map(fid => db.uploads[fid]).filter(u => u && u.owner === ws.uid)
       .map(u => ({ id: u.id, url: `/uploads/${u.id}`, filename: u.filename, size: u.size, content_type: u.content_type }));
+    // 2.0 : GIF de GIPHY (on garde juste l'adresse de l'image animée)
+    if (gif && /^https:\/\/(media\d*|i)\.giphy\.com\/[\w\/.\-?=&%]+$/.test(String(gif.url || '')) && String(gif.url).length < 400)
+      files.push({ id: 'gif-' + id(), gif: true, url: gif.url, filename: 'GIF', size: 0, content_type: 'image/gif',
+        width: Math.max(1, Math.min(2000, Number(gif.w) || 200)), height: Math.max(1, Math.min(2000, Number(gif.h) || 200)) });
     if (!content && !files.length) return;
     // Photo à voir une fois (messages privés) : pas d'adresse dans le message, on la demande au moment de l'ouvrir
     if (once && ch.type === 'dm' && files.length === 1 && /^image\//.test(files[0].content_type)) {
@@ -1268,7 +1429,8 @@ const handlers = {
     const u = db.users[userId]; if (!u || u.bot) throw new Error('Utilisateur introuvable');
     const me = ws.uid, other = userId !== me;
     return { t: 'profileData', user: publicUser(u), since: u.created || null,
-      highlights: other && blocked(me, userId) ? [] : publicHighlights(u),
+      highlights: other && (blocked(me, userId) || !canSeeProfile(me, userId)) ? [] : publicHighlights(u).filter((h, i) => !other || !(u.highlights[i]?.audience) || groupHas(userId, u.highlights[i].audience, me)),
+      postCount: canSeeProfile(me, userId) ? db.posts.filter(p => p.author === userId && canSeePost(me, p)).length : null, profileHidden: !canSeeProfile(me, userId),
       mutualServers: other ? serversOf(me).filter(s => s.members.includes(userId)).map(s => s.id) : [],
       mutualFriends: other ? friendsOf(me).filter(f => friendsOf(userId).includes(f)) : [] };
   },
@@ -1420,7 +1582,9 @@ const handlers = {
 
 const ownProfile = u => ({ presence: u.presence || 'online', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji,
   statusExpires: statusExpired(u) ? null : u.statusExpires || null, about: u.about || '', avatar: fileUrl(u.avatar), color: u.color,
-  banner: fileUrl(u.banner), bannerId: u.banner || null, accent: u.accent || null, pronouns: u.pronouns || '', mutes: liveMutes(u), fgroups: fgroupsOf(u) });
+  banner: fileUrl(u.banner), bannerId: u.banner || null, accent: u.accent || null, pronouns: u.pronouns || '', mutes: liveMutes(u), fgroups: fgroupsOf(u),
+  host: isHost(u.id), giphy: !!db.settings.giphyKey, profileAudience: u.profileAudience || null });
+const isHost = uid => Object.values(db.users).filter(x => !x.bot).sort((a, b) => String(a.created || '').localeCompare(String(b.created || '')))[0]?.id === uid;
 const fgroupsChanged = uid => sendTo(uid, { t: 'fgroups', fgroups: fgroupsOf(db.users[uid]) });
 // Sourdines : { idSalonOuServeur: date de fin ISO ou 'always' } ; les expirées disparaissent
 function liveMutes(u) {
@@ -1448,6 +1612,10 @@ function onMessage(ws, raw) {
   if (!ws.uid && !['register', 'login', 'resume'].includes(msg.t)) return ws.send({ t: 'error', ref: msg.ref, error: 'Connecte-toi d\'abord' });
   try {
     const out = fn(ws, msg);
+    if (out && typeof out.then === 'function') { // action asynchrone (ex. recherche de GIF)
+      out.then(r => ws.send(r ? { ...r, ref: msg.ref } : { t: 'ok', ref: msg.ref }), e => ws.send({ t: 'error', ref: msg.ref, error: e.message }));
+      return;
+    }
     if (out) ws.send({ ...out, ref: msg.ref });
     else if (msg.ref) ws.send({ t: 'ok', ref: msg.ref });
   } catch (e) { ws.send({ t: 'error', ref: msg.ref, error: e.message }); }

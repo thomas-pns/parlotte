@@ -1,7 +1,7 @@
 // Service worker de Parlotte : garde l'interface en cache pour qu'elle s'ouvre vite
 // (les messages, eux, arrivent toujours en direct par le serveur).
-const CACHE = 'parlotte-v15';
-const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/search.js', '/voix.js', '/presence.js', '/espaces.js', '/stories.js', '/reglages.js', '/profils.js', '/evenements.js', '/appels.js', '/nav16.js', '/parametres.js', '/media16.js', '/vendor/qrcode.js', '/push16.js', '/look17.js', '/extra17.js', '/cam18.js', '/srv18.js', '/fin18.js', '/fun18.js', '/v19.js', '/mobile.js', '/fonts/figtree-latin-wght-normal.woff2', '/fonts/bricolage-grotesque-latin-wght-normal.woff2', '/manifest.webmanifest', '/icon-192.png'];
+const CACHE = 'parlotte-v16';
+const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/search.js', '/voix.js', '/presence.js', '/espaces.js', '/stories.js', '/reglages.js', '/profils.js', '/evenements.js', '/appels.js', '/nav16.js', '/parametres.js', '/media16.js', '/vendor/qrcode.js', '/push16.js', '/look17.js', '/extra17.js', '/cam18.js', '/srv18.js', '/fin18.js', '/fun18.js', '/v19.js', '/v20.js', '/v20cam.js', '/v20chat.js', '/mobile.js', '/fonts/figtree-latin-wght-normal.woff2', '/fonts/bricolage-grotesque-latin-wght-normal.woff2', '/manifest.webmanifest', '/icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));

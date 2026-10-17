@@ -10,7 +10,9 @@
   const html = document.documentElement;
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const fullH = () => (innerWidth > innerHeight ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height));
-  window.iosFitMode = () => { try { return localStorage.getItem('parlotte-ios-fit') || 'auto'; } catch { return 'auto'; } };
+  // 2.0 : la vraie cause était la barre d'état « translucide » (corrigée dans index.html) : plus besoin des modes de secours
+  try { localStorage.removeItem('parlotte-ios-fit'); } catch {}
+  window.iosFitMode = () => 'auto';
   let peak = innerHeight, wasKb = false;
   const fit = () => {
     const r = html.style, kb = vv.height < innerHeight - 100 || (document.activeElement?.matches?.('input,textarea,[contenteditable]') && vv.height < peak - 100);

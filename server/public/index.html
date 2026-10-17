@@ -12,7 +12,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Parlotte">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- 2.0 : barre d'état « normale » (avec black-translucent, iOS 26/27 rend l'appli trop courte : bug WebKit 301108) -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <script>try { if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) document.documentElement.classList.add('standalone'); } catch {}</script>
 <script>try { const p = JSON.parse(localStorage.getItem('parlotte-prefs') || '{}'); document.documentElement.dataset.theme = p.theme || 'dark'; if (p.fs) document.documentElement.style.setProperty('--fs', p.fs + 'px'); } catch {}</script>
 </head>
@@ -169,6 +170,9 @@
 <script src="fin18.js"></script>
 <script src="fun18.js"></script>
 <script src="v19.js"></script>
+<script src="v20.js"></script>
+<script src="v20cam.js"></script>
+<script src="v20chat.js"></script>
 <script src="mobile.js"></script>
 </body>
 </html>
