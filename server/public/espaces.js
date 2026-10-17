@@ -133,7 +133,7 @@ function noServerHTML() {
 // ---------------------------------------------------------------- Liste des Potes
 function renderPotesList(head, list) {
   const f = st.view.pfilter || 'messages';
-  head.innerHTML = `<div class="col-head"><h1>Potes</h1><span class="col-acts">
+  head.innerHTML = `<div class="col-head"><h1>Messages</h1><span class="col-acts">
     <button id="potes-friends" class="round-btn" title="Tes potes et les demandes" aria-label="Tes potes">${ICON.users}</button>
     <button id="new-group" class="round-btn" title="Nouveau groupe" aria-label="Nouveau groupe">${ICON.group}</button>
     <button id="new-dm" class="round-btn" title="Nouveau message" aria-label="Nouveau message">${ICON.pen}</button></span></div>`;

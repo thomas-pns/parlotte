@@ -200,16 +200,25 @@ function bootstrap(uid) {
 // ---------------------------------------------------------------- Stories (24 h, visibles par les potes)
 const STORY_MS = 24 * 3600e3;
 const storyLive = x => new Date(x.expires) > new Date();
-const canSeeStory = (uid, x) => x.author === uid || (friendsOf(x.author).includes(uid) && !blocked(uid, x.author));
+// 1.9 : une story peut être réservée à une catégorie d'amis (amis proches, famille…)
+const inAudience = (uid, x) => !x.audience || (fgroupsOf(db.users[x.author]).find(g => g.id === x.audience)?.members || []).includes(uid);
+const canSeeStory = (uid, x) => x.author === uid || (friendsOf(x.author).includes(uid) && !blocked(uid, x.author) && inAudience(uid, x));
+// Catégories d'amis : « Amis proches » existe toujours, les autres sont créées par chacun (visibles par lui seul)
+function fgroupsOf(u) {
+  if (!u) return [];
+  if (!Array.isArray(u.fgroups)) u.fgroups = [];
+  if (!u.fgroups.some(g => g.id === 'close')) u.fgroups.unshift({ id: 'close', name: 'Amis proches', color: '#3FB27F', members: [] });
+  return u.fgroups;
+}
 function publicStory(x, uid) {
   const out = { id: x.id, author: x.author, url: `/uploads/${x.file}`, kind: x.kind, created: x.created, expires: x.expires,
-    seen: x.author === uid || !!x.views[uid], liked: x.likes.includes(uid),
+    seen: x.author === uid || !!x.views[uid], liked: x.likes.includes(uid), close: x.audience === 'close', audience: x.author === uid ? x.audience || null : undefined,
     stickers: x.stickers.map(k => k.type !== 'poll' ? k : { ...k, answers: k.answers.map(a => ({ id: a.id, text: a.text, count: a.votes.length, mine: a.votes.includes(uid) })) }) };
   if (x.author === uid) out.viewers = Object.entries(x.views).map(([u, at]) => ({ id: u, at, liked: x.likes.includes(u) })).sort((a, b) => b.at.localeCompare(a.at));
   return out;
 }
 const storiesFor = uid => db.stories.filter(x => storyLive(x) && canSeeStory(uid, x)).map(x => publicStory(x, uid));
-const storyAudience = x => [x.author, ...friendsOf(x.author)].filter(u => !blocked(u, x.author));
+const storyAudience = x => [x.author, ...friendsOf(x.author)].filter(u => !blocked(u, x.author) && (u === x.author || inAudience(u, x)));
 function storyChanged(x, only) {
   for (const u of only || storyAudience(x)) sendTo(u, { t: 'story', story: publicStory(x, u) });
 }
@@ -609,7 +618,9 @@ const handlers = {
     f.accepted = true; save(); refresh([ws.uid, userId]);
   },
   friendRemove(ws, { userId }) { // refuser, annuler ou retirer
-    db.friendships = db.friendships.filter(f => f !== friendship(ws.uid, userId)); save(); refresh([ws.uid, userId]);
+    db.friendships = db.friendships.filter(f => f !== friendship(ws.uid, userId));
+    for (const [a, b] of [[ws.uid, userId], [userId, ws.uid]]) if (db.users[a]?.fgroups) { for (const g of db.users[a].fgroups) g.members = g.members.filter(m => m !== b); }
+    save(); refresh([ws.uid, userId]); fgroupsChanged(ws.uid); if (online.has(userId)) fgroupsChanged(userId);
   },
   openDM(ws, { userId }) {
     if (!db.users[userId] || userId === ws.uid) throw new Error('Utilisateur introuvable');
@@ -653,6 +664,32 @@ const handlers = {
     save(); refresh(c.members); broadcast(c.members, { t: 'message', message: m });
   },
   // --- Thème de conversation (1.8), façon Instagram
+  // --- Catégories d'amis (1.9)
+  saveFriendGroup(ws, { groupId, name, color }) {
+    const u = db.users[ws.uid], gs = fgroupsOf(u);
+    name = clean(name || '', 30).trim(); if (!name) throw new Error('Donne un nom à la catégorie');
+    if (color && !/^#[0-9a-f]{6}$/i.test(color)) color = null;
+    let g = groupId && gs.find(x => x.id === groupId);
+    if (g) { g.name = name; if (color) g.color = color; }
+    else { if (gs.length >= 20) throw new Error('20 catégories maximum'); g = { id: id(), name, color: color || '#8E6CFF', members: [] }; gs.push(g); }
+    save(); fgroupsChanged(ws.uid); return { t: 'fgroupSaved', id: g.id };
+  },
+  deleteFriendGroup(ws, { groupId }) {
+    const u = db.users[ws.uid];
+    if (groupId === 'close') throw new Error('« Amis proches » ne peut pas être supprimée');
+    u.fgroups = fgroupsOf(u).filter(g => g.id !== groupId);
+    for (const x of db.stories) if (x.author === ws.uid && x.audience === groupId) x.audience = 'close';
+    save(); fgroupsChanged(ws.uid);
+  },
+  setFriendGroup(ws, { groupId, userId, on }) {
+    const g = fgroupsOf(db.users[ws.uid]).find(x => x.id === groupId); if (!g) throw new Error('Catégorie introuvable');
+    if (on && !friendsOf(ws.uid).includes(userId)) throw new Error('Ce n\'est pas (encore) ton pote');
+    g.members = g.members.filter(m => m !== userId); if (on) g.members.push(userId);
+    save(); fgroupsChanged(ws.uid);
+    // ses stories réservées apparaissent / disparaissent tout de suite chez ce pote
+    for (const x of db.stories) if (x.author === ws.uid && x.audience === groupId && storyLive(x)) sendTo(userId, on ? { t: 'story', story: publicStory(x, userId) } : { t: 'storyRemoved', id: x.id });
+  },
+
   setChatTheme(ws, { channelId, theme }) {
     const c = db.channels[channelId]; if (c?.type !== 'dm' || !c.members.includes(ws.uid)) throw new Error('Conversation introuvable');
     const THEMES = { '': 'Par défaut', sunset: 'Coucher de soleil', ocean: 'Océan', forest: 'Forêt', candy: 'Bonbon', night: 'Nuit étoilée', lava: 'Lave', mint: 'Menthe' };
@@ -1107,12 +1144,13 @@ const handlers = {
   },
 
   // --- Stories
-  postStory(ws, { fileId, stickers }) {
+  postStory(ws, { fileId, stickers, audience }) {
+    if (audience && !fgroupsOf(db.users[ws.uid]).some(g => g.id === audience)) throw new Error('Cette catégorie d\'amis n\'existe plus');
     const f = db.uploads[fileId];
     if (!f || f.owner !== ws.uid || !/^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(f.content_type)) throw new Error('Une story doit être une photo ou une vidéo');
     if (db.stories.filter(x => x.author === ws.uid && storyLive(x)).length >= 30) throw new Error('30 stories en même temps maximum');
     const x = { id: id(), author: ws.uid, file: f.id, kind: f.content_type.startsWith('video/') ? 'video' : 'image', created: now(),
-      expires: new Date(Date.now() + STORY_MS).toISOString(), stickers: cleanStickers(stickers), views: {}, likes: [] };
+      expires: new Date(Date.now() + STORY_MS).toISOString(), stickers: cleanStickers(stickers), views: {}, likes: [], audience: audience || null };
     db.stories.push(x); save(); storyChanged(x);
     return { t: 'storyPosted', story: publicStory(x, ws.uid) };
   },
@@ -1382,7 +1420,8 @@ const handlers = {
 
 const ownProfile = u => ({ presence: u.presence || 'online', customStatus: customOf(u).text, statusEmoji: customOf(u).emoji,
   statusExpires: statusExpired(u) ? null : u.statusExpires || null, about: u.about || '', avatar: fileUrl(u.avatar), color: u.color,
-  banner: fileUrl(u.banner), bannerId: u.banner || null, accent: u.accent || null, pronouns: u.pronouns || '', mutes: liveMutes(u) });
+  banner: fileUrl(u.banner), bannerId: u.banner || null, accent: u.accent || null, pronouns: u.pronouns || '', mutes: liveMutes(u), fgroups: fgroupsOf(u) });
+const fgroupsChanged = uid => sendTo(uid, { t: 'fgroups', fgroups: fgroupsOf(db.users[uid]) });
 // Sourdines : { idSalonOuServeur: date de fin ISO ou 'always' } ; les expirées disparaissent
 function liveMutes(u) {
   const out = {}; for (const [k, v] of Object.entries(u.mutes || {})) if (v === 'always' || Date.parse(v) > Date.now()) out[k] = v;
