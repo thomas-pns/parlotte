@@ -288,7 +288,7 @@ const _openFull19 = openFullProfile;
 openFullProfile = function (uid) { if (mobile()) return openPSheet(uid); $('#pfull').classList.remove('sheet19'); return _openFull19(uid); };
 // En-tête d'une conversation privée : toucher l'avatar ou le nom ouvre le profil
 document.addEventListener('click', e => {
-  if (!e.target.closest('#chan-av,#chan-title')) return;
+  if (!e.target.closest('#chan-av,#chan-title') || mobile()) return; // téléphone : la fiche contact (2.1)
   const c = channel(); if (c?.type !== 'dm' || c.group) return;
   e.stopImmediatePropagation(); openUserProfile(dmOther(c).id);
 }, true);

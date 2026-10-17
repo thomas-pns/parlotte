@@ -85,6 +85,7 @@ function burstOn(id, em) {
   view.addEventListener('touchstart', e => {
     x0 = null; if (e.touches.length !== 1) return;
     const r = e.target.closest('.msg[data-id]'); if (!r || r.classList.contains('sys') || r.classList.contains('bsys') || e.target.closest('.vwave,input,textarea,.poll,.game,[data-noswipe]')) return;
+    if (e.touches[0].clientX < 34) return; // le bord gauche sert à sortir de la conversation
     row = r; x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; mode = null; fired = false;
     dir = typeof drawerOK === 'function' && drawerOK() ? -1 : 1; // serveur : vers la gauche (la droite ouvre les salons)
   }, { passive: true });

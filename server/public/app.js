@@ -209,8 +209,10 @@ const statusLine = u => {
 const subline = statusLine;
 const isDnd = () => st.profile?.presence === 'dnd';
 // 2.0 : sans photo, une silhouette moderne sur un dégradé de la couleur de la personne (au lieu de l'initiale)
-const SILHOUETTE = '<svg class="sil" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="15.5" r="7.2"/><path d="M5.5 39c1.2-8.6 7.3-13.4 14.5-13.4S33.3 30.4 34.5 39z"/></svg>';
-const avatar = (u, withStatus) => `<div class="av ${u.avatar ? '' : 'nopic'}" data-user="${esc(u.id)}" style="${u.avatar ? `background:url('${esc(u.avatar)}')` : `--avc:${esc(u.color || '#8E6CFF')}`}">${u.avatar ? '' : SILHOUETTE}${withStatus ? `<span class="st" style="background:${dot[u.status] || dot.offline}"></span>` : ''}</div>`;
+const SILHOUETTE = '<svg class="sil" viewBox="0 0 40 40" aria-hidden="true">'
+  + '<path fill="#fff" fill-opacity=".95" d="M20 8.2c4.3 0 7.4 3.3 7.4 7.6 0 4.6-3.2 8.6-7.4 8.6s-7.4-4-7.4-8.6c0-4.3 3.1-7.6 7.4-7.6z"/>'
+  + '<path fill="#fff" fill-opacity=".8" d="M6.8 40c.4-6.4 4.4-11.2 9.9-12.6 1 .9 2.2 1.4 3.3 1.4s2.3-.5 3.3-1.4c5.5 1.4 9.5 6.2 9.9 12.6z"/></svg>';
+const avatar = (u, withStatus) => `<div class="av ${u.avatar ? '' : 'nopic'}" data-user="${esc(u.id)}" style="${u.avatar ? `background:url('${esc(u.avatar)}')` : `--avc:${esc(u.color || '#8E6CFF')}`}">${u.avatar ? '' : `<span class="sil-w">${SILHOUETTE}</span>`}${withStatus ? `<span class="st" style="background:${dot[u.status] || dot.offline}"></span>` : ''}</div>`;
 // Mise en forme : ```blocs de code```, > citations, # titres, listes, **gras**, *italique*, __souligné__,
 // ~~barré~~, ||spoiler||, `code`, liens, @mentions, #salons, emojis perso.
 function inlineFormat(raw, ctx) {

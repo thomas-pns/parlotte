@@ -233,7 +233,7 @@ function findStory(uid, storyId) {
 function cleanStickers(list) {
   const num = (v, a, b, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d; };
   return (Array.isArray(list) ? list : []).slice(0, 12).map(k => {
-    const base = { x: num(k?.x, 0, 1, 0.5), y: num(k?.y, 0, 1, 0.5), rot: num(k?.rot, -30, 30, 0) };
+    const base = { x: num(k?.x, 0, 1, 0.5), y: num(k?.y, 0, 1, 0.5), rot: num(k?.rot, -180, 180, 0), s: num(k?.s, 0.35, 4, 1) };
     if (k?.type === 'poll') {
       const answers = (Array.isArray(k.answers) ? k.answers : []).map(a => clean(a, 30)).filter(Boolean).slice(0, 4);
       const question = clean(k.question, 60);
@@ -849,7 +849,7 @@ const handlers = {
 
   setChatTheme(ws, { channelId, theme }) {
     const c = db.channels[channelId]; if (c?.type !== 'dm' || !c.members.includes(ws.uid)) throw new Error('Conversation introuvable');
-    const THEMES = { '': 'Par défaut', night: 'Nuit étoilée', aurora: 'Aurore', sunset: 'Coucher de soleil', ocean: 'Océan', neon: 'Néon', candy: 'Bonbon', forest: 'Forêt', lava: 'Lave', mint: 'Menthe', peach: 'Pêche', sky: 'Ciel', mono: 'Noir & blanc' };
+    const THEMES = { '': 'Par défaut', night: 'Nuit étoilée', aurora: 'Aurore', sunset: 'Coucher de soleil', ocean: 'Océan', neon: 'Néon', candy: 'Bonbon', forest: 'Forêt', lava: 'Lave', mint: 'Menthe', peach: 'Pêche', sky: 'Ciel', mono: 'Noir & blanc', synth: 'Synthwave' };
     const t = String(theme || ''); if (!(t in THEMES)) throw new Error('Thème inconnu');
     if ((c.theme || '') === t) return;
     if (t) c.theme = t; else delete c.theme;
@@ -1448,6 +1448,33 @@ const handlers = {
     h.items.push({ id: id(), story: x.id, file: x.file, kind: x.kind, stickers: JSON.parse(JSON.stringify(x.stickers)), created: x.created });
     save(); presenceChanged(ws.uid);
     return { t: 'highlightSaved', highlightId: h.id, title: h.title };
+  },
+  // 2.1 : mettre une photo/vidéo directement dans un « À la une » (sans passer par une story)
+  addHighlightFile(ws, { fileId, stickers, highlightId, title }) {
+    const u = db.users[ws.uid], f = db.uploads[fileId];
+    if (!f || f.owner !== ws.uid || !/^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(f.content_type)) throw new Error('Une photo ou une vidéo seulement');
+    u.highlights = u.highlights || [];
+    let h = highlightId && u.highlights.find(y => y.id === highlightId);
+    if (!h) {
+      if (u.highlights.length >= 12) throw new Error('12 « À la une » maximum');
+      h = { id: id(), title: clean(title, 24) || 'À la une', items: [] }; u.highlights.push(h);
+    }
+    if (h.items.length >= 40) throw new Error('40 éléments maximum par « À la une »');
+    h.items.push({ id: id(), story: null, file: f.id, kind: f.content_type.startsWith('video/') ? 'video' : 'image', stickers: cleanStickers(stickers).filter(k => k.type !== 'poll'), created: now() });
+    save(); presenceChanged(ws.uid);
+    return { t: 'highlightSaved', highlightId: h.id, title: h.title };
+  },
+  // 2.1 : partager une publication en privé (seulement à ceux qui peuvent la voir)
+  sharePost(ws, { postId, userIds, text }) {
+    const p = findPost(ws.uid, postId); let sent = 0, skipped = 0;
+    for (const uid of (Array.isArray(userIds) ? userIds : []).slice(0, 30)) {
+      if (!db.users[uid] || uid === ws.uid || !friendsOf(ws.uid).includes(uid) || !canSeePost(uid, p)) { skipped++; continue; }
+      const { channel } = handlers.openDM(ws, { userId: uid }); const ch = db.channels[channel];
+      const m = { id: id(), channel_id: channel, author_id: ws.uid, timestamp: now(), content: clean(text, 500) || '', reactions: {}, mentions: [],
+        story: { id: p.id, author: p.author, url: `/uploads/${p.file}`, kind: p.kind, post: true, shared: true } };
+      db.messages.push(m); broadcast(audienceOf(ch), { t: 'message', message: m }); notifyMessage(ch, m); sent++;
+    }
+    save(); return { t: 'shared', sent, skipped };
   },
   editHighlight(ws, { highlightId, title, removeItem, remove }) {
     const u = db.users[ws.uid], h = (u.highlights || []).find(y => y.id === highlightId);
